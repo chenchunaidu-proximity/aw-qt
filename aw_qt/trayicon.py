@@ -81,7 +81,7 @@ class TrayIcon(QSystemTrayIcon):
     ) -> None:
         QSystemTrayIcon.__init__(self, icon, parent)
         self._parent = parent  # QSystemTrayIcon also tries to save parent info but it screws up the type info
-        self.setToolTip("ActivityWatch" + (" (testing)" if testing else ""))
+        self.setToolTip("Samay" + (" (testing)" if testing else ""))
 
         self.manager = manager
         self.testing = testing
@@ -245,7 +245,7 @@ def run(manager: Manager, testing: bool = False) -> Any:
         QMessageBox.critical(
             widget,
             "Systray",
-            "I couldn't detect any system tray on this system. Either get one or run the ActivityWatch modules from the console.",
+            "I couldn't detect any system tray on this system. Either get one or run the Samay modules from the console.",
         )
         sys.exit(1)
 
