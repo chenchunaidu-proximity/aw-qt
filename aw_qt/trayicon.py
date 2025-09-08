@@ -4,6 +4,7 @@ import signal
 import subprocess
 import sys
 import webbrowser
+import requests
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -71,6 +72,35 @@ def open_dir(d: str) -> None:
         subprocess.Popen(["xdg-open", d], env=env)
 
 
+def get_auth_status(root_url: str) -> tuple[bool, str]:
+    """Check if user is authenticated and return status and token."""
+    try:
+        response = requests.get(f"{root_url}/api/0/token", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            token = data.get('token', '')
+            return bool(token), token
+        return False, ""
+    except requests.RequestException:
+        return False, ""
+
+
+def logout_user(root_url: str) -> bool:
+    """Logout user by deleting the stored token."""
+    try:
+        response = requests.delete(f"{root_url}/api/0/token", timeout=5)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def open_auth_page(root_url: str) -> None:
+    """Open authentication page in web browser."""
+    # This would typically be the frontend team's authentication page
+    auth_url = "https://samay.example.com/auth"  # Replace with actual auth URL
+    open_url(auth_url)
+
+
 class TrayIcon(QSystemTrayIcon):
     def __init__(
         self,
@@ -88,12 +118,57 @@ class TrayIcon(QSystemTrayIcon):
 
         self.root_url = f"http://localhost:{5666 if self.testing else 5600}"
         self.activated.connect(self.on_activated)
+        
+        # Authentication status
+        self.is_authenticated = False
+        self.auth_token = ""
 
         self._build_rootmenu()
+        self._update_auth_status()
 
     def on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             open_webui(self.root_url)
+    
+    def _update_auth_status(self) -> None:
+        """Update authentication status."""
+        self.is_authenticated, self.auth_token = get_auth_status(self.root_url)
+        self._update_tooltip()
+    
+    def _update_tooltip(self) -> None:
+        """Update tooltip with authentication status."""
+        base_tooltip = "Samay" + (" (testing)" if self.testing else "")
+        if self.is_authenticated:
+            self.setToolTip(f"{base_tooltip} - Authenticated")
+        else:
+            self.setToolTip(f"{base_tooltip} - Not authenticated")
+    
+    def _handle_login(self) -> None:
+        """Handle login button click."""
+        open_auth_page(self.root_url)
+        # Show message about URL scheme
+        QMessageBox.information(
+            self._parent,
+            "Authentication",
+            "Please complete authentication in your browser.\n\n"
+            "After logging in, you'll be redirected back to Samay automatically."
+        )
+    
+    def _handle_logout(self) -> None:
+        """Handle logout button click."""
+        if logout_user(self.root_url):
+            self._update_auth_status()
+            QMessageBox.information(
+                self._parent,
+                "Logout",
+                "Successfully logged out of Samay."
+            )
+        else:
+            QMessageBox.warning(
+                self._parent,
+                "Logout Failed",
+                "Failed to logout. Please try again."
+            )
 
     def _build_rootmenu(self) -> None:
         menu = QMenu(self._parent)
@@ -101,6 +176,18 @@ class TrayIcon(QSystemTrayIcon):
         if self.testing:
             menu.addAction("Running in testing mode")  # .setEnabled(False)
             menu.addSeparator()
+
+        # Authentication section
+        auth_menu = menu.addMenu("Authentication")
+        
+        if self.is_authenticated:
+            auth_menu.addAction("✓ Authenticated", lambda: None).setEnabled(False)
+            auth_menu.addAction("Logout", self._handle_logout)
+        else:
+            auth_menu.addAction("Login", self._handle_login)
+            auth_menu.addAction("Not authenticated", lambda: None).setEnabled(False)
+        
+        menu.addSeparator()
 
         # openWebUIIcon = QIcon.fromTheme("open")
         # menu.addAction("Open Dashboard", lambda: open_webui(self.root_url))
@@ -170,6 +257,15 @@ class TrayIcon(QSystemTrayIcon):
             QtCore.QTimer.singleShot(2000, rebuild_modules_menu)
 
         QtCore.QTimer.singleShot(2000, check_module_status)
+        
+        # Update authentication status periodically
+        def update_auth_status() -> None:
+            self._update_auth_status()
+            # Rebuild menu to reflect auth status changes
+            self._build_rootmenu()
+            QtCore.QTimer.singleShot(10000, update_auth_status)  # Check every 10 seconds
+        
+        QtCore.QTimer.singleShot(10000, update_auth_status)
 
     def _build_modulemenu(self, moduleMenu: QMenu) -> None:
         moduleMenu.clear()
