@@ -68,5 +68,5 @@ coll = COLLECT(exe,
 # NOTE: Untested, remove the False to test
 if False and platform.system() == "Darwin":
     app = BUNDLE(exe,
-                 name="ActivityWatch.app",
+                 name="Samay.app",
                  icon=None)  # TODO: Should this be icon=icon?
