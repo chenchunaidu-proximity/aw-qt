@@ -17,6 +17,47 @@ from .config import AwQtSettings
 logger = logging.getLogger(__name__)
 
 
+def handle_samay_url(url: str) -> None:
+    """
+    Handle samay:// URL scheme from Frontend.
+    Expected format: samay://token?token=JWT_TOKEN&url=API_URL
+    """
+    logger.info(f"🔗 Received samay:// URL: {url}")
+    
+    # Parse the URL to extract token and API URL
+    if url.startswith("samay://"):
+        # Remove the scheme part
+        url_part = url[8:]  # Remove "samay://"
+        
+        # Parse query parameters
+        params = {}
+        if "?" in url_part:
+            query_part = url_part.split("?")[1]
+            for param in query_part.split("&"):
+                if "=" in param:
+                    key, value = param.split("=", 1)
+                    params[key] = value
+        
+        token = params.get("token")
+        api_url = params.get("url")
+        
+        if token and api_url:
+            logger.info(f"✅ Successfully extracted:")
+            logger.info(f"   🔑 Token: {token[:20]}...{token[-10:] if len(token) > 30 else ''}")
+            logger.info(f"   🌐 API URL: {api_url}")
+            logger.info(f"   📊 Token length: {len(token)} characters")
+            # TODO: Store token and API URL in configuration
+            # This will be implemented in Phase 1.3
+            logger.info("⏳ Token and API URL will be stored in Phase 1.3")
+        else:
+            logger.error(f"❌ Missing required parameters:")
+            logger.error(f"   Token present: {bool(token)}")
+            logger.error(f"   API URL present: {bool(api_url)}")
+            logger.error(f"   Available params: {list(params.keys())}")
+    else:
+        logger.error(f"❌ Invalid URL scheme. Expected 'samay://' but got: {url[:10]}...")
+
+
 @click.command("aw-qt", help="A trayicon and service manager for Samay")
 @click.option(
     "--testing", is_flag=True, help="Run the trayicon and services in testing mode"
@@ -38,12 +79,17 @@ logger = logging.getLogger(__name__)
     is_flag=True,
     help="Start aw-qt in interactive cli mode (forces --no-gui)",
 )
+@click.option(
+    "--samay-url",
+    help="Handle samay:// URL scheme (for testing purposes)",
+)
 def main(
     testing: bool,
     verbose: bool,
     autostart_modules: Optional[str],
     no_gui: bool,
     interactive_cli: bool,
+    samay_url: Optional[str],
 ) -> None:
     # Since the .app can crash when started from Finder for unknown reasons, we send a syslog message here to make debugging easier.
     if platform.system() == "Darwin":
@@ -51,6 +97,11 @@ def main(
 
     setup_logging("aw-qt", testing=testing, verbose=verbose, log_file=True)
     logger.info("Started aw-qt...")
+
+    # Handle samay:// URL if provided (for testing)
+    if samay_url:
+        handle_samay_url(samay_url)
+        return
 
     # Since the .app can crash when started from Finder for unknown reasons, we send a syslog message here to make debugging easier.
     if platform.system() == "Darwin":
