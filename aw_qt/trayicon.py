@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import signal
@@ -7,7 +8,7 @@ import webbrowser
 import requests
 from pathlib import Path
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 import aw_core
 from PyQt6 import QtCore
@@ -24,7 +25,20 @@ from PyQt6.QtWidgets import (
 from .manager import Manager, Module
 from .config import AwQtSettings
 
+# macOS URL scheme handling
+if sys.platform == "darwin":
+    try:
+        import AppKit
+    except ImportError:
+        AppKit = None
+
 logger = logging.getLogger(__name__)
+
+# Import the pending buffer from main
+try:
+    from .main import pending_samay_url
+except Exception:
+    pending_samay_url = None
 
 
 def get_env() -> Dict[str, str]:
@@ -131,6 +145,23 @@ class TrayIcon(QSystemTrayIcon):
 
         self._build_rootmenu()
         self._update_auth_status()
+        
+        # After menu/build is ready, check for stored authentication data
+        try:
+            # Check for stored auth data (from QEvent.FileOpen or previous sessions)
+            self._load_stored_auth_data()
+            
+            # Process any pending URL from QEvent.FileOpen
+            global pending_samay_url
+            logger.info(f"🔧 TrayIcon init - checking pending URL: {pending_samay_url}")
+            if pending_samay_url:
+                logger.info("🔄 Found pending samay:// URL at startup; processing now")
+                self.handle_samay_url(pending_samay_url)
+                pending_samay_url = None
+            else:
+                logger.info("ℹ️ No pending URL at startup")
+        except Exception as e:
+            logger.exception(f"❌ Error loading auth data at startup: {e}")
 
     def on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -151,80 +182,101 @@ class TrayIcon(QSystemTrayIcon):
         else:
             self.setToolTip(f"{base_tooltip} - Not authenticated")
     
-    def handle_samay_url(self, url: str) -> None:
-        """
-        Handle samay:// URL scheme from Frontend.
-        Expected format: samay://token?token=JWT_TOKEN&url=API_URL
-        """
-        logger.info(f"🔗 TrayIcon received samay:// URL: {url}")
-        
-        # Parse the URL to extract token and API URL
-        if url.startswith("samay://"):
-            # Remove the scheme part
-            url_part = url[8:]  # Remove "samay://"
+    def _load_stored_auth_data(self):
+        """Load authentication data from Keychain or file storage."""
+        try:
+            # Try Keychain first
+            try:
+                import keyring
+                token = keyring.get_password("net.samay.Samay", "token")
+                api_url = keyring.get_password("net.samay.Samay", "target_url")
+                if token and api_url:
+                    logger.info("🔐 Loaded auth data from Keychain")
+                    self.auth_token = token
+                    self.api_url = api_url
+                    self.is_authenticated = True
+                    # Update config as well
+                    self.config.save_auth_data(token, api_url)
+                    return
+            except Exception:
+                pass
             
-            # Parse query parameters
-            params = {}
-            if "?" in url_part:
-                query_part = url_part.split("?")[1]
-                for param in query_part.split("&"):
-                    if "=" in param:
-                        key, value = param.split("=", 1)
-                        params[key] = value
+            # Fallback to file storage
+            auth_file = os.path.expanduser("~/Library/Application Support/activitywatch/aw-qt/auth.json")
+            if os.path.exists(auth_file):
+                with open(auth_file, "r") as f:
+                    auth_data = json.load(f)
+                    token = auth_data.get("token")
+                    api_url = auth_data.get("url")
+                    if token and api_url:
+                        logger.info("🔐 Loaded auth data from file storage")
+                        self.auth_token = token
+                        self.api_url = api_url
+                        self.is_authenticated = True
+                        # Update config as well
+                        self.config.save_auth_data(token, api_url)
+                        return
             
-            token = params.get("token")
-            api_url = params.get("url")
-            
-            if token and api_url:
-                logger.info(f"✅ TrayIcon successfully extracted:")
-                logger.info(f"   🔑 Token: {token[:20]}...{token[-10:] if len(token) > 30 else ''}")
-                logger.info(f"   🌐 API URL: {api_url}")
-                logger.info(f"   📊 Token length: {len(token)} characters")
-                
-                # Store the token and API URL
-                self.auth_token = token
-                self.api_url = api_url
-                self.is_authenticated = True
-                
-                # Save to configuration
-                if self.config.save_auth_data(token, api_url):
-                    logger.info("💾 Authentication data saved to configuration")
-                else:
-                    logger.error("❌ Failed to save authentication data to configuration")
-                
-                # Update UI
+            logger.info("ℹ️ No stored authentication data found")
+        except Exception as e:
+            logger.exception(f"❌ Error loading stored auth data: {e}")
+
+    def handle_samay_url(self, url: str):
+        """Handle samay:// URL scheme events."""
+        try:
+            logger.info(f"🔗 Processing samay:// URL: {url}")
+
+            parsed = urlparse(url)
+            if parsed.scheme != "samay":
+                logger.error(f"❌ Invalid URL scheme: {parsed.scheme}")
+                return
+
+            # Extract token and API URL
+            query_params = parse_qs(parsed.query)
+            token = query_params.get("token", [None])[0]
+            api_url = query_params.get("url", [None])[0]
+
+            if not token or not api_url:
+                logger.error("❌ Missing token or API URL in samay:// URL")
+                return
+
+            api_url = unquote(api_url)
+
+            # Trim logging of sensitive token
+            safe_tok = token[:10] + "…" if len(token) > 10 else token
+            logger.info(f"🔐 Extracted token: {safe_tok}")
+            logger.info(f"🔗 Extracted API URL: {api_url}")
+
+            # Store authentication data
+            self.auth_token = token
+            self.api_url = api_url
+            self.is_authenticated = True
+
+            # Persist to config
+            try:
+                self.config.save_auth_data(token, api_url)
+            except Exception:
+                logger.exception("⚠️ Failed to save auth data to config")
+
+            # Rebuild menu to reflect auth status
+            try:
                 self._update_auth_status()
-                self._build_rootmenu()  # Rebuild menu to show authenticated state
-                
-                # Show success message
+                self._build_rootmenu()
+            except Exception:
+                logger.exception("⚠️ Failed to rebuild tray menu after auth")
+
+            # Notify user
+            try:
                 QMessageBox.information(
-                    self._parent,
+                    self._parent or None,
                     "Authentication Success",
-                    f"Successfully connected to Samay!\n\n"
-                    f"API URL: {api_url}\n"
-                    f"Token: {token[:20]}...{token[-10:] if len(token) > 30 else ''}"
+                    f"Successfully connected to desktop!\nAPI URL: {api_url}"
                 )
-                
-                logger.info("🎉 Authentication completed successfully!")
-            else:
-                logger.error(f"❌ Missing required parameters:")
-                logger.error(f"   Token present: {bool(token)}")
-                logger.error(f"   API URL present: {bool(api_url)}")
-                logger.error(f"   Available params: {list(params.keys())}")
-                
-                QMessageBox.warning(
-                    self._parent,
-                    "Authentication Error",
-                    "Invalid authentication URL. Missing token or API URL."
-                )
-        else:
-            logger.error(f"❌ Invalid URL scheme. Expected 'samay://' but got: {url[:10]}...")
-            
-            QMessageBox.warning(
-                self._parent,
-                "Invalid URL",
-                f"Invalid URL scheme. Expected 'samay://' but got: {url[:10]}..."
-            )
+            except Exception:
+                logger.exception("⚠️ Failed to show authentication message box")
+
+        except Exception as e:
+            logger.exception(f"❌ Error processing samay:// URL: {e}")
     
     def _handle_login(self) -> None:
         """Handle login button click."""
@@ -316,39 +368,30 @@ class TrayIcon(QSystemTrayIcon):
 
             box.show()
 
-        def rebuild_modules_menu() -> None:
-            for action in modulesMenu.actions():
-                if action.isEnabled():
-                    module: Module = action.data()
-                    alive = module.is_alive()
-                    action.setChecked(alive)
-                    # print(module.text(), alive)
-
-            # TODO: Do it in a better way, singleShot isn't pretty...
-            QtCore.QTimer.singleShot(2000, rebuild_modules_menu)
-
-        QtCore.QTimer.singleShot(2000, rebuild_modules_menu)
-
-        def check_module_status() -> None:
-            unexpected_exits = self.manager.get_unexpected_stops()
-            if unexpected_exits:
-                for module in unexpected_exits:
-                    show_module_failed_dialog(module)
-                    module.stop()
-
-            # TODO: Do it in a better way, singleShot isn't pretty...
-            QtCore.QTimer.singleShot(2000, rebuild_modules_menu)
-
-        QtCore.QTimer.singleShot(2000, check_module_status)
+        # Use proper QTimer instead of recursive singleShot to prevent high CPU usage
+        self.module_timer = QtCore.QTimer()
+        self.module_timer.timeout.connect(lambda: self._update_modules_menu(modulesMenu, show_module_failed_dialog))
+        self.module_timer.start(5000)  # Check every 5 seconds instead of 2
         
         # Update authentication status periodically
-        def update_auth_status() -> None:
-            self._update_auth_status()
-            # Rebuild menu to reflect auth status changes
-            self._build_rootmenu()
-            QtCore.QTimer.singleShot(10000, update_auth_status)  # Check every 10 seconds
+        self.auth_timer = QtCore.QTimer()
+        self.auth_timer.timeout.connect(self._update_auth_status)
+        self.auth_timer.start(30000)  # Check every 30 seconds instead of 10
+
+    def _update_modules_menu(self, modulesMenu: QMenu, show_module_failed_dialog) -> None:
+        """Update modules menu and check for unexpected exits."""
+        for action in modulesMenu.actions():
+            if action.isEnabled():
+                module: Module = action.data()
+                alive = module.is_alive()
+                action.setChecked(alive)
         
-        QtCore.QTimer.singleShot(10000, update_auth_status)
+        # Check for unexpected exits
+        unexpected_exits = self.manager.get_unexpected_stops()
+        if unexpected_exits:
+            for module in unexpected_exits:
+                show_module_failed_dialog(module)
+                module.stop()
 
     def _build_modulemenu(self, moduleMenu: QMenu) -> None:
         moduleMenu.clear()
@@ -383,11 +426,116 @@ def exit(manager: Manager) -> None:
     QApplication.quit()
 
 
-def run(manager: Manager, testing: bool = False) -> Any:
+def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None) -> Any:
     logger.info("Creating trayicon...")
     # print(QIcon.themeSearchPaths())
 
     app = QApplication(sys.argv)
+
+    # Install QEvent.FileOpen filter for URL scheme handling (no PyObjC needed!)
+    if sys.platform == "darwin":
+        try:
+            from PyQt6.QtCore import QObject, QEvent
+            import urllib.parse
+            import json
+            import os
+            
+            # Optional secure storage with keyring
+            USE_KEYCHAIN = False
+            try:
+                import keyring
+                USE_KEYCHAIN = True
+                logger.info("🔐 Keyring available - will use Keychain for secure storage")
+            except Exception:
+                logger.info("🔐 Keyring not available - will use file-based storage")
+            
+            BUNDLE_ID = "net.samay.Samay"
+            FALLBACK_STORE = os.path.expanduser("~/Library/Application Support/activitywatch/aw-qt/auth.json")
+            
+            def ensure_dir(path):
+                d = os.path.dirname(path)
+                if d and not os.path.exists(d):
+                    os.makedirs(d, exist_ok=True)
+            
+            def save_token_url(token: str, target_url: str):
+                if USE_KEYCHAIN:
+                    keyring.set_password(BUNDLE_ID, "token", token)
+                    keyring.set_password(BUNDLE_ID, "target_url", target_url)
+                    logger.info("🔐 Token+URL saved to Keychain")
+                else:
+                    ensure_dir(FALLBACK_STORE)
+                    with open(FALLBACK_STORE, "w") as f:
+                        json.dump({"token": token, "url": target_url}, f)
+                    logger.info(f"🔐 Token+URL saved to {FALLBACK_STORE}")
+            
+            def parse_and_store(raw_url: str):
+                """Parse samay:// URL and store token/URL securely."""
+                try:
+                    parsed = urllib.parse.urlparse(raw_url)
+                    if parsed.scheme != "samay":
+                        return False
+                    
+                    # Action is in netloc part: samay://token
+                    if parsed.netloc.lower() != "token":
+                        return False
+                    
+                    qs = urllib.parse.parse_qs(parsed.query or "")
+                    token = (qs.get("token") or [None])[0]
+                    target_url = urllib.parse.unquote((qs.get("url") or [None])[0] or "")
+                    
+                    if not token or not target_url:
+                        logger.error("❌ Missing token or URL in samay:// URL")
+                        return False
+                    
+                    # Basic allowlist for security
+                    if not (target_url.startswith("http://") or target_url.startswith("https://") or 
+                           target_url.startswith("http://localhost") or target_url.startswith("http://127.0.0.1")):
+                        logger.error(f"❌ Invalid target URL: {target_url}")
+                        return False
+                    
+                    save_token_url(token, target_url)
+                    return True
+                except Exception as e:
+                    logger.exception(f"❌ Error parsing/storing samay:// URL: {e}")
+                    return False
+            
+            class UrlOpenFilter(QObject):
+                def eventFilter(self, obj, event):
+                    """Handle QEvent.FileOpen events from macOS for samay:// URLs."""
+                    if event.type() == QEvent.Type.FileOpen:
+                        url = ""
+                        try:
+                            if hasattr(event, "url") and event.url().isValid():
+                                url = event.url().toString()
+                            else:
+                                # Some Qt builds pass raw string via event.file()
+                                url = getattr(event, "file", lambda: "")()
+                        except Exception:
+                            pass
+                        
+                        if url and url.startswith("samay://"):
+                            logger.info(f"🔗 Received samay:// URL via QEvent.FileOpen: {url}")
+                            handled = parse_and_store(url)
+                            if handled:
+                                logger.info("✅ Successfully processed samay:// URL")
+                                # Signal to TrayIcon that auth data is available
+                                global pending_samay_url
+                                pending_samay_url = url
+                            return True  # Consume the event
+                    return super().eventFilter(obj, event)
+            
+            # Install the event filter immediately after QApplication creation
+            url_filter = UrlOpenFilter()
+            app.installEventFilter(url_filter)
+            logger.info("🔗 Registered QEvent.FileOpen filter for samay:// URLs")
+            
+            # Handle URL passed as command line argument (extra resilience)
+            if len(sys.argv) > 1 and sys.argv[1].startswith("samay://"):
+                logger.info(f"🔗 Processing samay:// URL from command line: {sys.argv[1]}")
+                parse_and_store(sys.argv[1])
+                
+        except Exception as e:
+            logger.exception(f"❌ Failed to register QEvent.FileOpen filter: {e}")
 
     # This is needed for the icons to get picked up with PyInstaller
     scriptdir = Path(__file__).parent
@@ -414,8 +562,8 @@ def run(manager: Manager, testing: bool = False) -> Any:
     signal.signal(signal.SIGTERM, lambda *args: exit(manager))
 
     timer = QtCore.QTimer()
-    timer.start(100)  # You may change this if you wish.
-    timer.timeout.connect(lambda: None)  # Let the interpreter run each 500 ms.
+    timer.start(1000)  # Reduced frequency to 1 second to prevent high CPU usage
+    timer.timeout.connect(lambda: None)  # Let the interpreter run each 1 second.
 
     # root widget
     widget = QWidget()
@@ -437,6 +585,11 @@ def run(manager: Manager, testing: bool = False) -> Any:
 
     trayIcon = TrayIcon(manager, icon, widget, testing=testing)
     trayIcon.show()
+
+    # Handle samay:// URL if provided
+    if samay_url:
+        logger.info(f"🔗 Processing samay:// URL in trayicon: {samay_url}")
+        trayIcon.handle_samay_url(samay_url)
 
     QApplication.setQuitOnLastWindowClosed(False)
 
