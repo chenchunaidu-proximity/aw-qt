@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .manager import Manager, Module
+from .config import AwQtSettings
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +121,13 @@ class TrayIcon(QSystemTrayIcon):
         self.root_url = f"http://localhost:{5666 if self.testing else 5600}"
         self.activated.connect(self.on_activated)
         
-        # Authentication status
-        self.is_authenticated = False
-        self.auth_token = ""
-        self.api_url = ""
+        # Load configuration
+        self.config = AwQtSettings(testing=testing)
+        
+        # Authentication status (use config values)
+        self.is_authenticated = self.config.is_authenticated
+        self.auth_token = self.config.auth_token
+        self.api_url = self.config.api_url
 
         self._build_rootmenu()
         self._update_auth_status()
@@ -181,6 +185,12 @@ class TrayIcon(QSystemTrayIcon):
                 self.auth_token = token
                 self.api_url = api_url
                 self.is_authenticated = True
+                
+                # Save to configuration
+                if self.config.save_auth_data(token, api_url):
+                    logger.info("💾 Authentication data saved to configuration")
+                else:
+                    logger.error("❌ Failed to save authentication data to configuration")
                 
                 # Update UI
                 self._update_auth_status()
