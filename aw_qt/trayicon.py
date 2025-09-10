@@ -98,8 +98,8 @@ def logout_user(root_url: str) -> bool:
 
 def open_auth_page(root_url: str) -> None:
     """Open authentication page in web browser."""
-    # This would typically be the frontend team's authentication page
-    auth_url = "https://samay.example.com/auth"  # Replace with actual auth URL
+    # Use local Frontend URL for development
+    auth_url = "http://localhost:3001/login"  # Local Frontend login page
     open_url(auth_url)
 
 
