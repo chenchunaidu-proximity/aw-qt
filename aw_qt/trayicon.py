@@ -7,6 +7,7 @@ import webbrowser
 import requests
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse, parse_qs
 
 import aw_core
 from PyQt6 import QtCore
@@ -122,6 +123,7 @@ class TrayIcon(QSystemTrayIcon):
         # Authentication status
         self.is_authenticated = False
         self.auth_token = ""
+        self.api_url = ""
 
         self._build_rootmenu()
         self._update_auth_status()
@@ -132,7 +134,9 @@ class TrayIcon(QSystemTrayIcon):
     
     def _update_auth_status(self) -> None:
         """Update authentication status."""
-        self.is_authenticated, self.auth_token = get_auth_status(self.root_url)
+        # Use stored authentication status instead of API call
+        # The old get_auth_status was for the old ActivityWatch API
+        # Now we use the token and API URL from Frontend
         self._update_tooltip()
     
     def _update_tooltip(self) -> None:
@@ -142,6 +146,75 @@ class TrayIcon(QSystemTrayIcon):
             self.setToolTip(f"{base_tooltip} - Authenticated")
         else:
             self.setToolTip(f"{base_tooltip} - Not authenticated")
+    
+    def handle_samay_url(self, url: str) -> None:
+        """
+        Handle samay:// URL scheme from Frontend.
+        Expected format: samay://token?token=JWT_TOKEN&url=API_URL
+        """
+        logger.info(f"🔗 TrayIcon received samay:// URL: {url}")
+        
+        # Parse the URL to extract token and API URL
+        if url.startswith("samay://"):
+            # Remove the scheme part
+            url_part = url[8:]  # Remove "samay://"
+            
+            # Parse query parameters
+            params = {}
+            if "?" in url_part:
+                query_part = url_part.split("?")[1]
+                for param in query_part.split("&"):
+                    if "=" in param:
+                        key, value = param.split("=", 1)
+                        params[key] = value
+            
+            token = params.get("token")
+            api_url = params.get("url")
+            
+            if token and api_url:
+                logger.info(f"✅ TrayIcon successfully extracted:")
+                logger.info(f"   🔑 Token: {token[:20]}...{token[-10:] if len(token) > 30 else ''}")
+                logger.info(f"   🌐 API URL: {api_url}")
+                logger.info(f"   📊 Token length: {len(token)} characters")
+                
+                # Store the token and API URL
+                self.auth_token = token
+                self.api_url = api_url
+                self.is_authenticated = True
+                
+                # Update UI
+                self._update_auth_status()
+                self._build_rootmenu()  # Rebuild menu to show authenticated state
+                
+                # Show success message
+                QMessageBox.information(
+                    self._parent,
+                    "Authentication Success",
+                    f"Successfully connected to Samay!\n\n"
+                    f"API URL: {api_url}\n"
+                    f"Token: {token[:20]}...{token[-10:] if len(token) > 30 else ''}"
+                )
+                
+                logger.info("🎉 Authentication completed successfully!")
+            else:
+                logger.error(f"❌ Missing required parameters:")
+                logger.error(f"   Token present: {bool(token)}")
+                logger.error(f"   API URL present: {bool(api_url)}")
+                logger.error(f"   Available params: {list(params.keys())}")
+                
+                QMessageBox.warning(
+                    self._parent,
+                    "Authentication Error",
+                    "Invalid authentication URL. Missing token or API URL."
+                )
+        else:
+            logger.error(f"❌ Invalid URL scheme. Expected 'samay://' but got: {url[:10]}...")
+            
+            QMessageBox.warning(
+                self._parent,
+                "Invalid URL",
+                f"Invalid URL scheme. Expected 'samay://' but got: {url[:10]}..."
+            )
     
     def _handle_login(self) -> None:
         """Handle login button click."""
