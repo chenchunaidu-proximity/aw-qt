@@ -12,7 +12,8 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 import aw_core
 from PyQt6 import QtCore
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QTimer, pyqtSlot
+from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import (
     QApplication,
     QMenu,
@@ -143,7 +144,17 @@ class TrayIcon(QSystemTrayIcon):
         self.auth_token = self.config.auth_token
         self.api_url = self.config.api_url
 
-        self._build_rootmenu()
+        # Persistent menu & actions (strong refs) - macOS fix
+        self.menu: Optional[QMenu] = None
+        self.auth_menu: Optional[QMenu] = None
+        self.login_action: Optional[QAction] = None
+        self.logout_action: Optional[QAction] = None
+        self.auth_status_action: Optional[QAction] = None
+
+        # Create the menu ONCE and keep it
+        self.menu = QMenu(self._parent)
+        self.setContextMenu(self.menu)
+        self._rebuild_menu_inplace()  # Update in place instead of replacing
         self._update_auth_status()
         
         # After menu/build is ready, check for stored authentication data
@@ -154,7 +165,7 @@ class TrayIcon(QSystemTrayIcon):
             # Rebuild menu to reflect loaded auth status
             if self.is_authenticated:
                 logger.info("🔄 Rebuilding menu to reflect authenticated state")
-                self._build_rootmenu()
+                self._rebuild_menu_inplace()
             
             # Process any pending URL from QEvent.FileOpen
             global pending_samay_url
@@ -167,6 +178,9 @@ class TrayIcon(QSystemTrayIcon):
                 logger.info("ℹ️ No pending URL at startup")
         except Exception as e:
             logger.exception(f"❌ Error loading auth data at startup: {e}")
+        
+        # Start periodic check for authentication status changes
+        self._start_auth_status_checker()
 
     def on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -235,14 +249,54 @@ class TrayIcon(QSystemTrayIcon):
                 keyring.delete_password("net.samay.Samay", "token")
                 keyring.delete_password("net.samay.Samay", "target_url")
                 logger.info("🔐 Cleared auth data from Keychain")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to clear Keychain data: {e}")
                 # Fallback to file storage
                 auth_file = os.path.expanduser("~/Library/Application Support/activitywatch/aw-qt/auth.json")
                 if os.path.exists(auth_file):
                     os.remove(auth_file)
                     logger.info(f"🔐 Cleared auth data from {auth_file}")
+                else:
+                    logger.info("ℹ️ No fallback auth file found")
         except Exception as e:
             logger.exception(f"❌ Error clearing auth data: {e}")
+    
+    def _start_auth_status_checker(self) -> None:
+        """Start periodic check for authentication status changes."""
+        try:
+            from PyQt6.QtCore import QTimer
+            
+            # Create timer to check auth status every 2 seconds
+            self.auth_check_timer = QTimer()
+            self.auth_check_timer.timeout.connect(self._check_auth_status)
+            self.auth_check_timer.start(2000)  # Check every 2 seconds
+            
+            logger.info("🔄 Started periodic authentication status checker")
+        except Exception as e:
+            logger.exception(f"❌ Failed to start auth status checker: {e}")
+    
+    def _check_auth_status(self) -> None:
+        """Check if authentication status has changed and update UI accordingly."""
+        try:
+            # Check if we now have stored auth data (regardless of current state)
+            old_auth_state = self.is_authenticated
+            self._load_stored_auth_data()
+            
+            # If auth status changed from not authenticated to authenticated
+            if not old_auth_state and self.is_authenticated:
+                logger.info("🔄 Authentication status changed - rebuilding menu")
+                self._rebuild_menu_inplace()
+                self._update_auth_status()
+                
+                # Force tray icon to refresh
+                self.show()
+                
+                # Stop the timer since we're now authenticated
+                if hasattr(self, 'auth_check_timer'):
+                    self.auth_check_timer.stop()
+                    logger.info("🔄 Stopped auth status checker - now authenticated")
+        except Exception as e:
+            logger.exception(f"❌ Error checking auth status: {e}")
 
     def handle_samay_url(self, url: str):
         """Handle samay:// URL scheme events."""
@@ -284,19 +338,28 @@ class TrayIcon(QSystemTrayIcon):
             # Rebuild menu to reflect auth status
             try:
                 self._update_auth_status()
-                self._build_rootmenu()
+                self._rebuild_menu_inplace()
             except Exception:
                 logger.exception("⚠️ Failed to rebuild tray menu after auth")
 
-            # Notify user
+            # Notify user with deferred dialog
             try:
-                QMessageBox.information(
-                    self._parent or None,
-                    "Authentication Success",
-                    f"Successfully connected to desktop!\nAPI URL: {api_url}"
-                )
+                def _show():
+                    try:
+                        logger.info("🎉 Showing authentication success popup")
+                        msg_box = QMessageBox(self._parent)
+                        msg_box.setWindowTitle("Authentication Success")
+                        msg_box.setText("Successfully connected to desktop!")
+                        msg_box.setInformativeText(f"API URL: {api_url}")
+                        msg_box.setIcon(QMessageBox.Icon.Information)
+                        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                        msg_box.exec()
+                        logger.info("✅ Authentication success popup shown")
+                    except Exception as e:
+                        logger.exception(f"❌ Error showing popup: {e}")
+                QTimer.singleShot(100, _show)  # Increased delay to 100ms
             except Exception:
-                logger.exception("⚠️ Failed to show authentication message box")
+                logger.exception("⚠️ Failed to schedule authentication message box")
 
         except Exception as e:
             logger.exception(f"❌ Error processing samay:// URL: {e}")
@@ -304,19 +367,24 @@ class TrayIcon(QSystemTrayIcon):
     def _handle_login(self) -> None:
         """Handle login button click."""
         open_auth_page(self.root_url)
-        # Show message about URL scheme
-        QMessageBox.information(
-            self._parent,
-            "Authentication",
-            "Please complete authentication in your browser.\n\n"
-            "After logging in, you'll be redirected back to Samay automatically."
-        )
+        
+        # Defer dialog so menu closes first
+        def _show():
+            QMessageBox.information(
+                self._parent,
+                "Authentication",
+                "Please complete authentication in your browser.\n\n"
+                "After logging in, you'll be redirected back to Samay automatically."
+            )
+        QTimer.singleShot(0, _show)
+        self._rebuild_menu_inplace()
     
     def _handle_logout(self) -> None:
         """Handle logout button click."""
         try:
-            # Clear stored authentication data
+            # Clear stored authentication data from both Keychain and config file
             self._clear_auth_data()
+            self.config.clear_auth_data()
             
             # Update authentication state
             self.is_authenticated = False
@@ -324,71 +392,102 @@ class TrayIcon(QSystemTrayIcon):
             self.api_url = ""
             
             # Rebuild menu to reflect logout
-            self._build_rootmenu()
+            self._rebuild_menu_inplace()
             
-            QMessageBox.information(
-                self._parent,
-                "Logout",
-                "Successfully logged out of Samay."
-            )
+            # Defer dialog so menu closes first
+            def _show():
+                msg_box = QMessageBox(self._parent)
+                msg_box.setIcon(QMessageBox.Icon.Information)
+                msg_box.setWindowTitle("Logout")
+                msg_box.setText("Successfully logged out of Samay.")
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg_box.exec()
+            QTimer.singleShot(0, _show)
         except Exception as e:
             logger.exception(f"❌ Error during logout: {e}")
-            QMessageBox.warning(
-                self._parent,
-                "Logout Failed",
-                "Failed to logout. Please try again."
+            QTimer.singleShot(0, lambda: QMessageBox.warning(
+                self._parent, "Logout Failed", "Failed to logout. Please try again.")
             )
 
-    def _build_rootmenu(self) -> None:
-        menu = QMenu(self._parent)
+    def _rebuild_menu_inplace(self) -> None:
+        """Rebuild the persistent tray menu without replacing the QMenu instance."""
+        if self.menu is None:
+            self.menu = QMenu(self._parent)
+            self.setContextMenu(self.menu)
 
+        self.menu.clear()
+        
+        # Keep strong refs to submenus/actions
         if self.testing:
-            menu.addAction("Running in testing mode")  # .setEnabled(False)
-            menu.addSeparator()
+            self.menu.addAction("Running in testing mode").setEnabled(True)
+            self.menu.addSeparator()
 
         # Authentication section
-        auth_menu = menu.addMenu("Authentication")
-        
+        self.auth_menu = self.menu.addMenu("Authentication")
+
         if self.is_authenticated:
-            auth_menu.addAction("✓ Authenticated", lambda: None).setEnabled(False)
-            auth_menu.addAction("Logout", self._handle_logout)
+            self.auth_status_action = self.auth_menu.addAction("✓ Authenticated")
+            self.auth_status_action.setEnabled(False)
+
+            self.logout_action = self.auth_menu.addAction("Logout")
+            # Make sure it's explicitly enabled
+            self.logout_action.setEnabled(True)
+            self.logout_action.triggered.connect(self._handle_logout)
+            
+            # RADICAL APPROACH: Completely recreate the menu
+            QTimer.singleShot(100, self._recreate_menu_completely)
         else:
-            auth_menu.addAction("Login", self._handle_login)
-            auth_menu.addAction("Not authenticated", lambda: None).setEnabled(False)
-        
-        menu.addSeparator()
+            self.login_action = self.auth_menu.addAction("Login")
+            self.login_action.setEnabled(True)
+            self.login_action.triggered.connect(self._handle_login)
 
-        # openWebUIIcon = QIcon.fromTheme("open")
-        # menu.addAction("Open Dashboard", lambda: open_webui(self.root_url))
-        # menu.addAction("Open API Browser", lambda: open_apibrowser(self.root_url))
+            self.auth_status_action = self.auth_menu.addAction("Not authenticated")
+            self.auth_status_action.setEnabled(False)
 
-        menu.addSeparator()
+        self.menu.addSeparator()
 
-        modulesMenu = menu.addMenu("Modules")
-        self._build_modulemenu(modulesMenu)
+        modulesMenu = self.menu.addMenu("Modules")
+        self._populate_modules_menu(modulesMenu)
 
-        menu.addSeparator()
-        menu.addAction(
-            "Open log folder", lambda: open_dir(aw_core.dirs.get_log_dir(None))
-        )
-        menu.addAction(
-            "Open config folder", lambda: open_dir(aw_core.dirs.get_config_dir(None))
-        )
-        menu.addSeparator()
+        self.menu.addSeparator()
+        self.menu.addAction("Open log folder", lambda: open_dir(aw_core.dirs.get_log_dir(None)))
+        self.menu.addAction("Open config folder", lambda: open_dir(aw_core.dirs.get_config_dir(None)))
+        self.menu.addSeparator()
 
-        exitIcon = QIcon.fromTheme(
-            "application-exit", QIcon("media/application_exit.png")
-        )
-        # This check is an attempted solution to: https://github.com/ActivityWatch/activitywatch/issues/62
-        # Seems to be in agreement with: https://github.com/OtterBrowser/otter-browser/issues/1313
-        #   "it seems that the bug is also triggered when creating a QIcon with an invalid path"
+        exitIcon = QIcon.fromTheme("application-exit", QIcon("media/application_exit.png"))
         if exitIcon.availableSizes():
-            menu.addAction(exitIcon, "Quit Samay", lambda: exit(self.manager))
+            self.menu.addAction(exitIcon, "Quit Samay", lambda: exit(self.manager))
         else:
-            menu.addAction("Quit Samay", lambda: exit(self.manager))
+            self.menu.addAction("Quit Samay", lambda: exit(self.manager))
 
-        self.setContextMenu(menu)
+    def _recreate_menu_completely(self) -> None:
+        """RADICAL APPROACH: Completely destroy and recreate the menu."""
+        try:
+            # Step 1: Destroy the old menu completely
+            old_menu = self.menu
+            self.setContextMenu(None)
+            
+            # Step 2: Create a brand new menu instance
+            self.menu = QMenu(self._parent)
+            
+            # Step 3: Rebuild the entire menu from scratch
+            self._rebuild_menu_inplace()
+            
+            # Step 4: Set the new menu as context menu
+            self.setContextMenu(self.menu)
+            
+            # Step 5: Force tray icon refresh
+            self.show()
+            
+            # Step 6: Clean up old menu (let Python GC handle it)
+            del old_menu
+            
+            logger.info("🔄 RADICAL: Completely recreated menu to bypass macOS state issues")
+        except Exception as e:
+            logger.exception(f"❌ Error recreating menu completely: {e}")
 
+    def _populate_modules_menu(self, modulesMenu: QMenu) -> None:
+        """Populate the modules submenu."""
         def show_module_failed_dialog(module: Module) -> None:
             box = QMessageBox(self._parent)
             box.setIcon(QMessageBox.Icon.Warning)
@@ -427,13 +526,26 @@ class TrayIcon(QSystemTrayIcon):
                 show_module_failed_dialog(module)
                 module.stop()
 
-    def _build_modulemenu(self, moduleMenu: QMenu) -> None:
-        moduleMenu.clear()
+    def _populate_modules_menu(self, modulesMenu: QMenu) -> None:
+        """Populate the modules submenu with deferred dialogs for macOS compatibility."""
+        modulesMenu.clear()
+
+        def show_module_failed_dialog(module: Module) -> None:
+            # Defer dialog to avoid blocking the tray menu stack on macOS
+            def _show():
+                box = QMessageBox(self._parent)
+                box.setIcon(QMessageBox.Icon.Warning)
+                box.setText(f"Module {module.name} quit unexpectedly")
+                box.setDetailedText(module.read_log(self.testing))
+                restart_button = QPushButton("Restart", box)
+                restart_button.clicked.connect(module.start)
+                box.addButton(restart_button, QMessageBox.ButtonRole.AcceptRole)
+                box.exec()
+            QTimer.singleShot(0, _show)
 
         def add_module_menuitem(module: Module) -> None:
             title = module.name
-            ac = moduleMenu.addAction(title, lambda: module.toggle(self.testing))
-
+            ac = modulesMenu.addAction(title, lambda: module.toggle(self.testing))
             ac.setData(module)
             ac.setCheckable(True)
             ac.setChecked(module.is_alive())
@@ -442,11 +554,20 @@ class TrayIcon(QSystemTrayIcon):
             ("bundled", self.manager.modules_bundled),
             ("system", self.manager.modules_system),
         ]:
-            header = moduleMenu.addAction(location)
+            header = modulesMenu.addAction(location)
             header.setEnabled(False)
 
             for module in sorted(modules, key=lambda m: m.name):
                 add_module_menuitem(module)
+
+        # Add failed modules with deferred dialogs
+        failed_modules = [m for m in self.manager.modules if getattr(m, "failed", False)]
+        if failed_modules:
+            modulesMenu.addSeparator()
+            for module in failed_modules:
+                act = QAction(f"⚠️ {module.name} (failed)", self._parent)
+                act.triggered.connect(lambda _checked=False, m=module: show_module_failed_dialog(m))
+                modulesMenu.addAction(act)
 
 
 def exit(manager: Manager) -> None:
@@ -465,6 +586,7 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
     # print(QIcon.themeSearchPaths())
 
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)  # Recommended for tray apps
 
     # Install QEvent.FileOpen filter for URL scheme handling (no PyObjC needed!)
     if sys.platform == "darwin":
@@ -501,6 +623,25 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                     with open(FALLBACK_STORE, "w") as f:
                         json.dump({"token": token, "url": target_url}, f)
                     logger.info(f"🔐 Token+URL saved to {FALLBACK_STORE}")
+                
+                # Show success popup
+                try:
+                    def _show_popup():
+                        try:
+                            logger.info("🎉 Showing authentication success popup")
+                            msg_box = QMessageBox()
+                            msg_box.setWindowTitle("Authentication Success")
+                            msg_box.setText("Successfully connected to desktop!")
+                            msg_box.setInformativeText(f"API URL: {target_url}")
+                            msg_box.setIcon(QMessageBox.Icon.Information)
+                            msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                            msg_box.exec()
+                            logger.info("✅ Authentication success popup shown")
+                        except Exception as e:
+                            logger.exception(f"❌ Error showing popup: {e}")
+                    QTimer.singleShot(100, _show_popup)
+                except Exception:
+                    logger.exception("⚠️ Failed to schedule authentication popup")
             
             def parse_and_store(raw_url: str):
                 """Parse samay:// URL and store token/URL securely."""
