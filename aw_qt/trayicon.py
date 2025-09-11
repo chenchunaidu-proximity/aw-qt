@@ -118,6 +118,9 @@ def open_auth_page(root_url: str) -> None:
     open_url(auth_url)
 
 
+
+# Global reference to the live tray icon instance (used by macOS URL callbacks)
+current_tray_icon = None  # set in TrayIcon.__init__
 class TrayIcon(QSystemTrayIcon):
     def __init__(
         self,
@@ -164,8 +167,11 @@ class TrayIcon(QSystemTrayIcon):
             
             # Rebuild menu to reflect loaded auth status
             if self.is_authenticated:
-                logger.info("🔄 Rebuilding menu to reflect authenticated state")
-                self._rebuild_menu_inplace()
+                logger.info("🔄 Recreating menu to reflect authenticated state (macOS fix)")
+                try:
+                    self._recreate_menu_completely()
+                except Exception:
+                    self._rebuild_menu_inplace()
             
             # Process any pending URL from QEvent.FileOpen
             global pending_samay_url
@@ -181,6 +187,10 @@ class TrayIcon(QSystemTrayIcon):
         
         # Start periodic check for authentication status changes
         self._start_auth_status_checker()
+
+        # Register global tray handle for URL callbacks
+        global current_tray_icon
+        current_tray_icon = self
 
     def on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -693,7 +703,13 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                             handled = parse_and_store(url)
                             if handled:
                                 logger.info("✅ Successfully processed samay:// URL")
-                                # Signal to TrayIcon that auth data is available
+                                # Immediately refresh tray menu if instance exists
+                                try:
+                                    from PyQt6.QtCore import QTimer
+                                    QTimer.singleShot(0, lambda: (current_tray_icon and current_tray_icon.handle_samay_url(url)))
+                                except Exception:
+                                    pass
+                                # Fallback: leave pending URL too
                                 global pending_samay_url
                                 pending_samay_url = url
                             return True  # Consume the event

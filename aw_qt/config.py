@@ -54,7 +54,7 @@ class AwQtSettings:
                     data = json.load(f)
                 
                 self.auth_token = data.get('token')
-                self.api_url = data.get('api_url')
+                self.api_url = data.get('api_url') or data.get('url') or data.get('target_url')
                 self.is_authenticated = bool(self.auth_token and self.api_url)
                 
                 if self.is_authenticated:
