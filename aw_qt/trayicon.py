@@ -151,6 +151,11 @@ class TrayIcon(QSystemTrayIcon):
             # Check for stored auth data (from QEvent.FileOpen or previous sessions)
             self._load_stored_auth_data()
             
+            # Rebuild menu to reflect loaded auth status
+            if self.is_authenticated:
+                logger.info("🔄 Rebuilding menu to reflect authenticated state")
+                self._build_rootmenu()
+            
             # Process any pending URL from QEvent.FileOpen
             global pending_samay_url
             logger.info(f"🔧 TrayIcon init - checking pending URL: {pending_samay_url}")
@@ -220,6 +225,24 @@ class TrayIcon(QSystemTrayIcon):
             logger.info("ℹ️ No stored authentication data found")
         except Exception as e:
             logger.exception(f"❌ Error loading stored auth data: {e}")
+    
+    def _clear_auth_data(self) -> None:
+        """Clear authentication data from Keychain or file storage."""
+        try:
+            # Try Keychain first
+            try:
+                import keyring
+                keyring.delete_password("net.samay.Samay", "token")
+                keyring.delete_password("net.samay.Samay", "target_url")
+                logger.info("🔐 Cleared auth data from Keychain")
+            except Exception:
+                # Fallback to file storage
+                auth_file = os.path.expanduser("~/Library/Application Support/activitywatch/aw-qt/auth.json")
+                if os.path.exists(auth_file):
+                    os.remove(auth_file)
+                    logger.info(f"🔐 Cleared auth data from {auth_file}")
+        except Exception as e:
+            logger.exception(f"❌ Error clearing auth data: {e}")
 
     def handle_samay_url(self, url: str):
         """Handle samay:// URL scheme events."""
@@ -291,14 +314,25 @@ class TrayIcon(QSystemTrayIcon):
     
     def _handle_logout(self) -> None:
         """Handle logout button click."""
-        if logout_user(self.root_url):
-            self._update_auth_status()
+        try:
+            # Clear stored authentication data
+            self._clear_auth_data()
+            
+            # Update authentication state
+            self.is_authenticated = False
+            self.auth_token = ""
+            self.api_url = ""
+            
+            # Rebuild menu to reflect logout
+            self._build_rootmenu()
+            
             QMessageBox.information(
                 self._parent,
                 "Logout",
                 "Successfully logged out of Samay."
             )
-        else:
+        except Exception as e:
+            logger.exception(f"❌ Error during logout: {e}")
             QMessageBox.warning(
                 self._parent,
                 "Logout Failed",
