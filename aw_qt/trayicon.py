@@ -308,6 +308,42 @@ class TrayIcon(QSystemTrayIcon):
         except Exception as e:
             logger.exception(f"❌ Error checking auth status: {e}")
 
+    def _build_rootmenu(self) -> None:
+        menu = QMenu(self._parent)
+
+        if self.testing:
+            menu.addAction("Running in testing mode")  # .setEnabled(False)
+            menu.addSeparator()
+
+        # openWebUIIcon = QIcon.fromTheme("open")
+        # menu.addAction("Open Dashboard", lambda: open_webui(self.root_url))
+        # menu.addAction("Open API Browser", lambda: open_apibrowser(self.root_url))
+
+        menu.addSeparator()
+
+        modulesMenu = menu.addMenu("Modules")
+        self._build_modulemenu(modulesMenu)
+
+        menu.addSeparator()
+        menu.addAction(
+            "Open log folder", lambda: open_dir(aw_core.dirs.get_log_dir(None))
+        )
+        menu.addAction(
+            "Open config folder", lambda: open_dir(aw_core.dirs.get_config_dir(None))
+        )
+        menu.addSeparator()
+
+        exitIcon = QIcon.fromTheme(
+            "application-exit", QIcon("media/application_exit.png")
+        )
+        # This check is an attempted solution to: https://github.com/ActivityWatch/activitywatch/issues/62
+        # Seems to be in agreement with: https://github.com/OtterBrowser/otter-browser/issues/1313
+        #   "it seems that the bug is also triggered when creating a QIcon with an invalid path"
+        if exitIcon.availableSizes():
+            menu.addAction(exitIcon, "Quit Samay", lambda: exit(self.manager))
+        else:
+            menu.addAction("Quit Samay", lambda: exit(self.manager))
+
     def handle_samay_url(self, url: str):
         """Handle samay:// URL scheme events."""
         try:
