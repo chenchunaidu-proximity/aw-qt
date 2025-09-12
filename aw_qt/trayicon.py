@@ -388,7 +388,7 @@ class TrayIcon(QSystemTrayIcon):
             except Exception:
                 logger.exception("⚠️ Failed to rebuild tray menu after auth")
 
-            # Notify user with deferred dialog
+            # Notify user with authentication success popup
             try:
                 def _show():
                     try:
@@ -403,7 +403,7 @@ class TrayIcon(QSystemTrayIcon):
                         logger.info("✅ Authentication success popup shown")
                     except Exception as e:
                         logger.exception(f"❌ Error showing popup: {e}")
-                QTimer.singleShot(100, _show)  # Increased delay to 100ms
+                QTimer.singleShot(100, _show)
             except Exception:
                 logger.exception("⚠️ Failed to schedule authentication message box")
 
@@ -644,24 +644,8 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                         json.dump({"token": token, "url": target_url}, f)
                     logger.info(f"🔐 Token+URL saved to {FALLBACK_STORE}")
                 
-                # Show success popup
-                try:
-                    def _show_popup():
-                        try:
-                            logger.info("🎉 Showing authentication success popup")
-                            msg_box = QMessageBox()
-                            msg_box.setWindowTitle("Authentication Success")
-                            msg_box.setText("Successfully connected to desktop!")
-                            msg_box.setInformativeText(f"API URL: {target_url}")
-                            msg_box.setIcon(QMessageBox.Icon.Information)
-                            msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-                            msg_box.exec()
-                            logger.info("✅ Authentication success popup shown")
-                        except Exception as e:
-                            logger.exception(f"❌ Error showing popup: {e}")
-                    QTimer.singleShot(100, _show_popup)
-                except Exception:
-                    logger.exception("⚠️ Failed to schedule authentication popup")
+                # No popup here - let handle_samay_url() handle it
+                logger.info("✅ Authentication data stored successfully")
             
             def parse_and_store(raw_url: str):
                 """Parse samay:// URL and store token/URL securely."""
