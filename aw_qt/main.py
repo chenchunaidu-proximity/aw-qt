@@ -38,12 +38,17 @@ logger = logging.getLogger(__name__)
     is_flag=True,
     help="Start aw-qt in interactive cli mode (forces --no-gui)",
 )
+@click.option(
+    "--samay-url",
+    help="Handle samay:// URL scheme (for testing purposes)",
+)
 def main(
     testing: bool,
     verbose: bool,
     autostart_modules: Optional[str],
     no_gui: bool,
     interactive_cli: bool,
+    samay_url: Optional[str],
 ) -> None:
     # Since the .app can crash when started from Finder for unknown reasons, we send a syslog message here to make debugging easier.
     if platform.system() == "Darwin":
@@ -51,6 +56,17 @@ def main(
 
     setup_logging("aw-qt", testing=testing, verbose=verbose, log_file=True)
     logger.info("Started aw-qt...")
+
+    # Check for samay:// URL scheme arguments from macOS
+    samay_url_from_args = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("samay://"):
+            samay_url_from_args = arg
+            logger.info(f"🔗 Found samay:// URL in command line arguments: {arg}")
+            break
+    
+    # Use URL from command line if available, otherwise use --samay-url parameter
+    final_samay_url = samay_url_from_args or samay_url
 
     # Since the .app can crash when started from Finder for unknown reasons, we send a syslog message here to make debugging easier.
     if platform.system() == "Darwin":
@@ -81,7 +97,7 @@ def main(
         from . import trayicon  # pylint: disable=import-outside-toplevel
 
         # run the trayicon, wait for signal to quit
-        error_code = trayicon.run(manager, testing=testing)
+        error_code = trayicon.run(manager, testing=testing, samay_url=final_samay_url)
     elif interactive_cli:
         # just an experiment, don't really see the use right now
         _interactive_cli(manager)

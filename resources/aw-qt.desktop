@@ -9,6 +9,6 @@ Terminal=false
 Type=Application
 X-GNOME-Autostart-enabled=true
 Version=1.0
-Icon=samay
+Icon=logo
 Categories=Utility;
 
