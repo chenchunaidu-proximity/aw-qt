@@ -167,11 +167,8 @@ class TrayIcon(QSystemTrayIcon):
             
             # Rebuild menu to reflect loaded auth status
             if self.is_authenticated:
-                logger.info("🔄 Recreating menu to reflect authenticated state (macOS fix)")
-                try:
-                    self._recreate_menu_completely()
-                except Exception:
-                    self._rebuild_menu_inplace()
+                logger.info("🔄 Rebuilding menu to reflect authenticated state")
+                self._rebuild_menu_inplace()
             
             # Process any pending URL from QEvent.FileOpen
             global pending_samay_url
@@ -295,11 +292,12 @@ class TrayIcon(QSystemTrayIcon):
             # If auth status changed from not authenticated to authenticated
             if not old_auth_state and self.is_authenticated:
                 logger.info("🔄 Authentication status changed - rebuilding menu")
-                self._rebuild_menu_inplace()
                 self._update_auth_status()
+                self._rebuild_menu_inplace()
                 
-                # Force tray icon to refresh
+                # Force tray icon to refresh with multiple attempts
                 self.show()
+                QTimer.singleShot(100, lambda: self.show())
                 
                 # Stop the timer since we're now authenticated
                 if hasattr(self, 'auth_check_timer'):
@@ -385,6 +383,8 @@ class TrayIcon(QSystemTrayIcon):
             try:
                 self._update_auth_status()
                 self._rebuild_menu_inplace()
+                # Force immediate refresh to ensure menu is properly updated
+                QTimer.singleShot(50, lambda: self.show())
             except Exception:
                 logger.exception("⚠️ Failed to rebuild tray menu after auth")
 
@@ -470,9 +470,6 @@ class TrayIcon(QSystemTrayIcon):
             # Make sure it's explicitly enabled
             self.logout_action.setEnabled(True)
             self.logout_action.triggered.connect(self._handle_logout)
-            
-            # RADICAL APPROACH: Completely recreate the menu
-            QTimer.singleShot(100, self._recreate_menu_completely)
         else:
             self.login_action = self.auth_menu.addAction("Login")
             self.login_action.setEnabled(True)
@@ -496,32 +493,18 @@ class TrayIcon(QSystemTrayIcon):
             self.menu.addAction(exitIcon, "Quit Samay", lambda: exit(self.manager))
         else:
             self.menu.addAction("Quit Samay", lambda: exit(self.manager))
+        
+        # Force menu refresh after rebuild
+        self.show()
 
     def _recreate_menu_completely(self) -> None:
-        """RADICAL APPROACH: Completely destroy and recreate the menu."""
+        """Fallback method for complete menu recreation if needed."""
         try:
-            # Step 1: Destroy the old menu completely
-            old_menu = self.menu
-            self.setContextMenu(None)
-            
-            # Step 2: Create a brand new menu instance
-            self.menu = QMenu(self._parent)
-            
-            # Step 3: Rebuild the entire menu from scratch
+            # Only use this as a last resort
+            logger.info("🔄 Using fallback menu recreation method")
             self._rebuild_menu_inplace()
-            
-            # Step 4: Set the new menu as context menu
-            self.setContextMenu(self.menu)
-            
-            # Step 5: Force tray icon refresh
-            self.show()
-            
-            # Step 6: Clean up old menu (let Python GC handle it)
-            del old_menu
-            
-            logger.info("🔄 RADICAL: Completely recreated menu to bypass macOS state issues")
         except Exception as e:
-            logger.exception(f"❌ Error recreating menu completely: {e}")
+            logger.exception(f"❌ Error in fallback menu recreation: {e}")
 
     def _populate_modules_menu(self, modulesMenu: QMenu) -> None:
         """Populate the modules submenu."""
