@@ -113,8 +113,8 @@ def logout_user(root_url: str) -> bool:
 
 def open_auth_page(root_url: str) -> None:
     """Open authentication page in web browser."""
-    # Use local Frontend URL for development
-    auth_url = "http://localhost:3001/login"  # Local Frontend login page
+    # Use environment variable with production fallback
+    auth_url = os.getenv('SAMAY_FRONTEND_URL', 'https://getsamay.vercel.app/login')
     open_url(auth_url)
 
 
