@@ -377,16 +377,7 @@ class TrayIcon(QSystemTrayIcon):
     def _handle_login(self) -> None:
         """Handle login button click."""
         open_auth_page(self.root_url)
-        
-        # Defer dialog so menu closes first
-        def _show():
-            QMessageBox.information(
-                self._parent,
-                "Authentication",
-                "Please complete authentication in your browser.\n\n"
-                "After logging in, you'll be redirected back to Samay automatically."
-            )
-        QTimer.singleShot(0, _show)
+        # No dialog needed - browser opening provides sufficient feedback
         self._rebuild_menu_inplace()
     
     def _handle_logout(self) -> None:
