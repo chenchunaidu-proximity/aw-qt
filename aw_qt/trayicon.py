@@ -256,6 +256,7 @@ class TrayIcon(QSystemTrayIcon):
                 
                 # Force tray icon to refresh with multiple attempts
                 self.show()
+                # UI refresh timer - ensures tray icon visual state updates after menu changes
                 QTimer.singleShot(100, lambda: self.show())
                 
                 # Stop the timer since we're now authenticated
@@ -343,6 +344,7 @@ class TrayIcon(QSystemTrayIcon):
                 self._update_auth_status()
                 self._rebuild_menu_inplace()
                 # Force immediate refresh to ensure menu is properly updated
+                # UI synchronization timer - prevents race conditions in menu updates
                 QTimer.singleShot(50, lambda: self.show())
             except Exception:
                 logger.exception("⚠️ Failed to rebuild tray menu after auth")
@@ -362,7 +364,8 @@ class TrayIcon(QSystemTrayIcon):
                         logger.info("✅ Authentication success popup shown")
                     except Exception as e:
                         logger.exception(f"❌ Error showing popup: {e}")
-                QTimer.singleShot(100, _show)
+            # Error recovery timer - ensures popup shows after error handling completes
+            QTimer.singleShot(100, _show)
             except Exception:
                 logger.exception("⚠️ Failed to schedule authentication message box")
 
@@ -398,9 +401,11 @@ class TrayIcon(QSystemTrayIcon):
                 msg_box.setText("Successfully logged out of Samay.")
                 msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
                 msg_box.exec()
+            # Event loop deferral timer - ensures UI operations execute in correct order
             QTimer.singleShot(0, _show)
         except Exception as e:
             logger.exception(f"❌ Error during logout: {e}")
+            # Event loop deferral timer - prevents UI blocking during error handling
             QTimer.singleShot(0, lambda: QMessageBox.warning(
                 self._parent, "Logout Failed", "Failed to logout. Please try again.")
             )
@@ -511,6 +516,7 @@ class TrayIcon(QSystemTrayIcon):
                 restart_button.clicked.connect(module.start)
                 box.addButton(restart_button, QMessageBox.ButtonRole.AcceptRole)
                 box.exec()
+            # Event loop deferral timer - ensures UI operations execute in correct order
             QTimer.singleShot(0, _show)
 
         def add_module_menuitem(module: Module) -> None:
@@ -654,6 +660,7 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                                 # Immediately refresh tray menu if instance exists
                                 try:
                                     from PyQt6.QtCore import QTimer
+                                    # Event loop deferral timer - ensures URL handling happens after current event processing
                                     QTimer.singleShot(0, lambda: (current_tray_icon and current_tray_icon.handle_samay_url(url)))
                                 except Exception:
                                     pass
