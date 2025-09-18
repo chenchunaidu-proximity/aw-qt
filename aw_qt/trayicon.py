@@ -201,34 +201,38 @@ class TrayIcon(QSystemTrayIcon):
             self.setToolTip(f"{base_tooltip} - Not authenticated")
     
     def _load_stored_auth_data(self):
-        """Load authentication data using aw-core keyring utility."""
+        """Load authentication data from aw-server SQLite storage."""
         try:
-            from aw_core.util import get_auth_data
-            
-            auth_data = get_auth_data()
-            if auth_data:
-                token, api_url = auth_data
-                self.auth_token = token
-                self.api_url = api_url
-                self.is_authenticated = True
-                # Update config as well
-                self.config.save_auth_data(token, api_url)
-                return
+            import requests
+            server_url = f"http://localhost:{5666 if self.testing else 5600}"
+            response = requests.get(f"{server_url}/api/0/token", timeout=2)
+            if response.status_code == 200:
+                data = response.json()
+                token = data.get('token')
+                url = data.get('url')
+                if token and url:
+                    self.auth_token = token
+                    self.api_url = url
+                    self.is_authenticated = True
+                    # Update config as well
+                    self.config.save_auth_data(token, url)
+                    return
             
             logger.info("ℹ️ No stored authentication data found")
         except Exception as e:
-            logger.exception(f"❌ Error loading stored auth data: {e}")
+            logger.debug(f"Could not load from aw-server: {e}")
+            logger.info("ℹ️ No stored authentication data found")
     
     def _clear_auth_data(self) -> None:
-        """Clear authentication data using aw-core keyring utility."""
+        """Clear authentication data from aw-server SQLite storage."""
         try:
-            from aw_core.util import clear_auth_data
-            
-            success = clear_auth_data()
-            if success:
-                logger.info("✅ Authentication data cleared successfully")
+            import requests
+            server_url = f"http://localhost:{5666 if self.testing else 5600}"
+            response = requests.delete(f"{server_url}/api/0/token", timeout=2)
+            if response.status_code == 200:
+                logger.info("🔐 Authentication data cleared from aw-server")
             else:
-                logger.warning("⚠️ Some authentication data may not have been cleared")
+                logger.warning(f"Failed to clear auth data: {response.status_code}")
         except Exception as e:
             logger.exception(f"❌ Error clearing auth data: {e}")
     
@@ -583,13 +587,19 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                     os.makedirs(d, exist_ok=True)
             
             def save_token_url(token: str, target_url: str):
-                from aw_core.util import save_auth_data
+                import requests
+                server_url = f"http://localhost:{5666 if self.testing else 5600}"
                 
-                success = save_auth_data(token, target_url)
-                if success:
-                    logger.info("✅ Authentication data stored successfully")
-                else:
-                    logger.error("❌ Failed to store authentication data")
+                try:
+                    response = requests.post(f"{server_url}/api/0/token", 
+                                           json={"token": token, "url": target_url}, 
+                                           timeout=2)
+                    if response.status_code == 200:
+                        logger.info("✅ Authentication data stored in aw-server")
+                    else:
+                        logger.error(f"❌ Failed to store auth data: {response.status_code}")
+                except Exception as e:
+                    logger.exception(f"❌ Error storing auth data: {e}")
             
             def parse_and_store(raw_url: str):
                 """Parse samay:// URL and store token/URL securely."""
