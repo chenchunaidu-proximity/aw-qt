@@ -160,30 +160,22 @@ class TrayIcon(QSystemTrayIcon):
         self._rebuild_menu_inplace()  # Update in place instead of replacing
         self._update_auth_status()
         
-        # After menu/build is ready, check for stored authentication data
-        try:
-            # Check for stored auth data (from QEvent.FileOpen or previous sessions)
-            self._load_stored_auth_data()
-            
-            # Rebuild menu to reflect loaded auth status
-            if self.is_authenticated:
-                logger.info("🔄 Rebuilding menu to reflect authenticated state")
-                self._rebuild_menu_inplace()
-            
-            # Process any pending URL from QEvent.FileOpen
-            global pending_samay_url
-            logger.info(f"🔧 TrayIcon init - checking pending URL: {pending_samay_url}")
-            if pending_samay_url:
-                logger.info("🔄 Found pending samay:// URL at startup; processing now")
-                self.handle_samay_url(pending_samay_url)
-                pending_samay_url = None
-            else:
-                logger.info("ℹ️ No pending URL at startup")
-        except Exception as e:
-            logger.exception(f"❌ Error loading auth data at startup: {e}")
+        # Auth data already loaded by AwQtSettings - no need to reload
+        # Rebuild menu to reflect loaded auth status
+        if self.is_authenticated:
+            logger.info("🔄 Rebuilding menu to reflect authenticated state")
+            self._rebuild_menu_inplace()
         
-        # Start periodic check for authentication status changes
-        self._start_auth_status_checker()
+        # Process any pending URL from QEvent.FileOpen
+        global pending_samay_url
+        logger.info(f"🔧 TrayIcon init - checking pending URL: {pending_samay_url}")
+        if pending_samay_url:
+            logger.info("🔄 Found pending samay:// URL at startup; processing now")
+            self.handle_samay_url(pending_samay_url)
+            pending_samay_url = None
+        else:
+            logger.info("ℹ️ No pending URL at startup")
+        
 
         # Register global tray handle for URL callbacks
         global current_tray_icon
@@ -209,78 +201,41 @@ class TrayIcon(QSystemTrayIcon):
             self.setToolTip(f"{base_tooltip} - Not authenticated")
     
     def _load_stored_auth_data(self):
-        """Load authentication data from Keychain or file storage."""
+        """Load authentication data using aw-core keyring utility."""
         try:
-            # Try Keychain first
-            try:
-                import keyring
-                token = keyring.get_password("net.samay.Samay", "token")
-                api_url = keyring.get_password("net.samay.Samay", "target_url")
-                if token and api_url:
-                    logger.info("🔐 Loaded auth data from Keychain")
-                    self.auth_token = token
-                    self.api_url = api_url
-                    self.is_authenticated = True
-                    # Update config as well
-                    self.config.save_auth_data(token, api_url)
-                    return
-            except Exception:
-                pass
+            from aw_core.util import get_auth_data
             
-            # Fallback to file storage
-            auth_file = os.path.expanduser("~/Library/Application Support/activitywatch/aw-qt/auth.json")
-            if os.path.exists(auth_file):
-                with open(auth_file, "r") as f:
-                    auth_data = json.load(f)
-                    token = auth_data.get("token")
-                    api_url = auth_data.get("url")
-                    if token and api_url:
-                        logger.info("🔐 Loaded auth data from file storage")
-                        self.auth_token = token
-                        self.api_url = api_url
-                        self.is_authenticated = True
-                        # Update config as well
-                        self.config.save_auth_data(token, api_url)
-                        return
+            auth_data = get_auth_data()
+            if auth_data:
+                token, api_url = auth_data
+                self.auth_token = token
+                self.api_url = api_url
+                self.is_authenticated = True
+                # Update config as well
+                self.config.save_auth_data(token, api_url)
+                return
             
             logger.info("ℹ️ No stored authentication data found")
         except Exception as e:
             logger.exception(f"❌ Error loading stored auth data: {e}")
     
     def _clear_auth_data(self) -> None:
-        """Clear authentication data from Keychain or file storage."""
+        """Clear authentication data using aw-core keyring utility."""
         try:
-            # Try Keychain first
-            try:
-                import keyring
-                keyring.delete_password("net.samay.Samay", "token")
-                keyring.delete_password("net.samay.Samay", "target_url")
-                logger.info("🔐 Cleared auth data from Keychain")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to clear Keychain data: {e}")
-                # Fallback to file storage
-                auth_file = os.path.expanduser("~/Library/Application Support/activitywatch/aw-qt/auth.json")
-                if os.path.exists(auth_file):
-                    os.remove(auth_file)
-                    logger.info(f"🔐 Cleared auth data from {auth_file}")
-                else:
-                    logger.info("ℹ️ No fallback auth file found")
+            from aw_core.util import clear_auth_data
+            
+            success = clear_auth_data()
+            if success:
+                logger.info("✅ Authentication data cleared successfully")
+            else:
+                logger.warning("⚠️ Some authentication data may not have been cleared")
         except Exception as e:
             logger.exception(f"❌ Error clearing auth data: {e}")
     
     def _start_auth_status_checker(self) -> None:
-        """Start periodic check for authentication status changes."""
-        try:
-            from PyQt6.QtCore import QTimer
-            
-            # Create timer to check auth status every 2 seconds
-            self.auth_check_timer = QTimer()
-            self.auth_check_timer.timeout.connect(self._check_auth_status)
-            self.auth_check_timer.start(2000)  # Check every 2 seconds
-            
-            logger.info("🔄 Started periodic authentication status checker")
-        except Exception as e:
-            logger.exception(f"❌ Failed to start auth status checker: {e}")
+        """Auth status only changes on user actions, not polling."""
+        logger.info("ℹ️ Auth status checker disabled - using event-driven updates only")
+    
     
     def _check_auth_status(self) -> None:
         """Check if authentication status has changed and update UI accordingly."""
@@ -521,15 +476,6 @@ class TrayIcon(QSystemTrayIcon):
 
             box.show()
 
-        # Use proper QTimer instead of recursive singleShot to prevent high CPU usage
-        self.module_timer = QtCore.QTimer()
-        self.module_timer.timeout.connect(lambda: self._update_modules_menu(modulesMenu, show_module_failed_dialog))
-        self.module_timer.start(5000)  # Check every 5 seconds instead of 2
-        
-        # Update authentication status periodically
-        self.auth_timer = QtCore.QTimer()
-        self.auth_timer.timeout.connect(self._update_auth_status)
-        self.auth_timer.start(30000)  # Check every 30 seconds instead of 10
 
     def _update_modules_menu(self, modulesMenu: QMenu, show_module_failed_dialog) -> None:
         """Update modules menu and check for unexpected exits."""
@@ -619,9 +565,12 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
             # Optional secure storage with keyring
             USE_KEYCHAIN = False
             try:
-                import keyring
-                USE_KEYCHAIN = True
-                logger.info("🔐 Keyring available - will use Keychain for secure storage")
+                from aw_core.util import is_keyring_available
+                USE_KEYCHAIN = is_keyring_available()
+                if USE_KEYCHAIN:
+                    logger.info("🔐 Keyring available - will use Keychain for secure storage")
+                else:
+                    logger.info("🔐 Keyring not available - will use file-based storage")
             except Exception:
                 logger.info("🔐 Keyring not available - will use file-based storage")
             
@@ -634,18 +583,13 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                     os.makedirs(d, exist_ok=True)
             
             def save_token_url(token: str, target_url: str):
-                if USE_KEYCHAIN:
-                    keyring.set_password(BUNDLE_ID, "token", token)
-                    keyring.set_password(BUNDLE_ID, "target_url", target_url)
-                    logger.info("🔐 Token+URL saved to Keychain")
-                else:
-                    ensure_dir(FALLBACK_STORE)
-                    with open(FALLBACK_STORE, "w") as f:
-                        json.dump({"token": token, "url": target_url}, f)
-                    logger.info(f"🔐 Token+URL saved to {FALLBACK_STORE}")
+                from aw_core.util import save_auth_data
                 
-                # No popup here - let handle_samay_url() handle it
-                logger.info("✅ Authentication data stored successfully")
+                success = save_auth_data(token, target_url)
+                if success:
+                    logger.info("✅ Authentication data stored successfully")
+                else:
+                    logger.error("❌ Failed to store authentication data")
             
             def parse_and_store(raw_url: str):
                 """Parse samay:// URL and store token/URL securely."""
@@ -746,9 +690,6 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
     # Ensure cleanup happens on SIGTERM
     signal.signal(signal.SIGTERM, lambda *args: exit(manager))
 
-    timer = QtCore.QTimer()
-    timer.start(1000)  # Reduced frequency to 1 second to prevent high CPU usage
-    timer.timeout.connect(lambda: None)  # Let the interpreter run each 1 second.
 
     # root widget
     widget = QWidget()
