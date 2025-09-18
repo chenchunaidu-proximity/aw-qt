@@ -350,22 +350,23 @@ class TrayIcon(QSystemTrayIcon):
                 logger.exception("⚠️ Failed to rebuild tray menu after auth")
 
             # Notify user with authentication success popup
-            try:
-                def _show():
-                    try:
-                        logger.info("🎉 Showing authentication success popup")
-                        msg_box = QMessageBox(self._parent)
-                        msg_box.setWindowTitle("Authentication Success")
-                        msg_box.setText("Successfully connected to desktop!")
-                        msg_box.setInformativeText(f"API URL: {api_url}")
-                        msg_box.setIcon(QMessageBox.Icon.Information)
-                        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-                        msg_box.exec()
-                        logger.info("✅ Authentication success popup shown")
-                    except Exception as e:
-                        logger.exception(f"❌ Error showing popup: {e}")
+            def _show():
+                try:
+                    logger.info("🎉 Showing authentication success popup")
+                    msg_box = QMessageBox(self._parent)
+                    msg_box.setWindowTitle("Authentication Success")
+                    msg_box.setText("Successfully connected to desktop!")
+                    msg_box.setInformativeText(f"API URL: {api_url}")
+                    msg_box.setIcon(QMessageBox.Icon.Information)
+                    msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                    msg_box.exec()
+                    logger.info("✅ Authentication success popup shown")
+                except Exception as e:
+                    logger.exception(f"❌ Error showing popup: {e}")
+            
             # Error recovery timer - ensures popup shows after error handling completes
-            QTimer.singleShot(100, _show)
+            try:
+                QTimer.singleShot(100, _show)
             except Exception:
                 logger.exception("⚠️ Failed to schedule authentication message box")
 
@@ -594,7 +595,7 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
             
             def save_token_url(token: str, target_url: str):
                 import requests
-                server_url = f"http://localhost:{5666 if self.testing else 5600}"
+                server_url = f"http://localhost:5600"
                 
                 try:
                     response = requests.post(f"{server_url}/api/0/token", 
