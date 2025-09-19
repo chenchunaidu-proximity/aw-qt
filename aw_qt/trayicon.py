@@ -573,17 +573,6 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
             import json
             import os
             
-            # Optional secure storage with keyring
-            USE_KEYCHAIN = False
-            try:
-                from aw_core.util import is_keyring_available
-                USE_KEYCHAIN = is_keyring_available()
-                if USE_KEYCHAIN:
-                    logger.info("🔐 Keyring available - will use Keychain for secure storage")
-                else:
-                    logger.info("🔐 Keyring not available - will use file-based storage")
-            except Exception:
-                logger.info("🔐 Keyring not available - will use file-based storage")
             
             BUNDLE_ID = "net.samay.Samay"
             FALLBACK_STORE = os.path.expanduser("~/Library/Application Support/activitywatch/aw-qt/auth.json")
