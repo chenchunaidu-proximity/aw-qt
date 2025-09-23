@@ -495,12 +495,19 @@ class TrayIcon(QSystemTrayIcon):
                 alive = module.is_alive()
                 action.setChecked(alive)
         
-        # Check for unexpected exits
+        # Check for unexpected exits and attempt auto-restart
         unexpected_exits = self.manager.get_unexpected_stops()
         if unexpected_exits:
             for module in unexpected_exits:
-                show_module_failed_dialog(module)
-                module.stop()
+                # Simple restart attempt
+                if not hasattr(module, '_restart_count'):
+                    module._restart_count = 0
+                if module._restart_count < 3:
+                    module._restart_count += 1
+                    module.start(self.testing)
+                else:
+                    show_module_failed_dialog(module)
+                    module.stop()
 
     def _populate_modules_menu(self, modulesMenu: QMenu) -> None:
         """Populate the modules submenu with deferred dialogs for macOS compatibility."""
