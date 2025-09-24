@@ -498,14 +498,19 @@ class TrayIcon(QSystemTrayIcon):
         # Check for unexpected exits and attempt auto-restart
         unexpected_exits = self.manager.get_unexpected_stops()
         if unexpected_exits:
+            logger.info(f"===>> Found {len(unexpected_exits)} failed modules")
             for module in unexpected_exits:
+                logger.warning(f"===>> Module {module.name} has stopped unexpectedly")
                 # Simple restart attempt
                 if not hasattr(module, '_restart_count'):
                     module._restart_count = 0
                 if module._restart_count < 3:
                     module._restart_count += 1
+                    logger.info(f"===>> Attempting to restart {module.name} (attempt {module._restart_count}/3)")
                     module.start(self.testing)
+                    logger.info(f"===>> Restart attempt completed for {module.name}")
                 else:
+                    logger.error(f"===>> Module {module.name} has exceeded max restart attempts, showing dialog")
                     show_module_failed_dialog(module)
                     module.stop()
 
