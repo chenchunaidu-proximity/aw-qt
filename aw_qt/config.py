@@ -24,6 +24,8 @@ class AwQtSettings:
         An instance of loaded settings, containing a list of modules to autostart.
         Constructor takes a `testing` boolean as an argument
         """
+        self.testing = testing  # Store testing flag as instance variable
+        
         config = load_config_toml("aw-qt", default_config)
         config_section: Any = config["aw-qt" if not testing else "aw-qt-testing"]
 
