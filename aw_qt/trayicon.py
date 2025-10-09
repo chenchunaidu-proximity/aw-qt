@@ -146,6 +146,10 @@ class TrayIcon(QSystemTrayIcon):
         self.is_authenticated = self.config.is_authenticated
         self.auth_token = self.config.auth_token
         self.api_url = self.config.api_url
+        
+        # Autostart manager
+        from .autostart import AutostartManager
+        self.autostart_manager = AutostartManager()
 
         # Persistent menu & actions (strong refs) - macOS fix
         self.menu: Optional[QMenu] = None
@@ -393,6 +397,62 @@ class TrayIcon(QSystemTrayIcon):
             
             # Rebuild menu to reflect logout
             self._rebuild_menu_inplace()
+    
+    def _handle_enable_autostart(self) -> None:
+        """Handle enable autostart button click."""
+        try:
+            success = self.autostart_manager.enable_autostart()
+            if success:
+                logger.info("✅ Autostart enabled successfully")
+                # Show success message
+                msg_box = QMessageBox(self._parent)
+                msg_box.setWindowTitle("Autostart Enabled")
+                msg_box.setText("Samay will now automatically start when you log in.")
+                msg_box.setIcon(QMessageBox.Icon.Information)
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg_box.exec()
+                
+                # Rebuild menu to reflect new status
+                self._rebuild_menu_inplace()
+            else:
+                logger.error("❌ Failed to enable autostart")
+                # Show error message
+                msg_box = QMessageBox(self._parent)
+                msg_box.setWindowTitle("Autostart Error")
+                msg_box.setText("Failed to enable autostart. Please check the logs for details.")
+                msg_box.setIcon(QMessageBox.Icon.Warning)
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg_box.exec()
+        except Exception as e:
+            logger.exception(f"❌ Error enabling autostart: {e}")
+    
+    def _handle_disable_autostart(self) -> None:
+        """Handle disable autostart button click."""
+        try:
+            success = self.autostart_manager.disable_autostart()
+            if success:
+                logger.info("✅ Autostart disabled successfully")
+                # Show success message
+                msg_box = QMessageBox(self._parent)
+                msg_box.setWindowTitle("Autostart Disabled")
+                msg_box.setText("Samay will no longer automatically start when you log in.")
+                msg_box.setIcon(QMessageBox.Icon.Information)
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg_box.exec()
+                
+                # Rebuild menu to reflect new status
+                self._rebuild_menu_inplace()
+            else:
+                logger.error("❌ Failed to disable autostart")
+                # Show error message
+                msg_box = QMessageBox(self._parent)
+                msg_box.setWindowTitle("Autostart Error")
+                msg_box.setText("Failed to disable autostart. Please check the logs for details.")
+                msg_box.setIcon(QMessageBox.Icon.Warning)
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg_box.exec()
+        except Exception as e:
+            logger.exception(f"❌ Error disabling autostart: {e}")
             
             # Defer dialog so menu closes first
             def _show():
@@ -442,6 +502,25 @@ class TrayIcon(QSystemTrayIcon):
 
             self.auth_status_action = self.auth_menu.addAction("Not authenticated")
             self.auth_status_action.setEnabled(False)
+
+        self.menu.addSeparator()
+
+        # Autostart section
+        autostart_menu = self.menu.addMenu("Autostart")
+        autostart_enabled = self.autostart_manager.is_autostart_enabled()
+        
+        if autostart_enabled:
+            autostart_status_action = autostart_menu.addAction("✓ Autostart enabled")
+            autostart_status_action.setEnabled(False)
+            
+            disable_autostart_action = autostart_menu.addAction("Disable autostart")
+            disable_autostart_action.triggered.connect(self._handle_disable_autostart)
+        else:
+            enable_autostart_action = autostart_menu.addAction("Enable autostart")
+            enable_autostart_action.triggered.connect(self._handle_enable_autostart)
+            
+            autostart_status_action = autostart_menu.addAction("Autostart disabled")
+            autostart_status_action.setEnabled(False)
 
         self.menu.addSeparator()
 
