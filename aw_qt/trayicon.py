@@ -188,6 +188,29 @@ class TrayIcon(QSystemTrayIcon):
     def on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             open_webui(self.root_url)
+        elif reason == QSystemTrayIcon.ActivationReason.Trigger:
+            # Refresh menu on single click to show current auth status
+            self._refresh_menu_on_click()
+    
+    def _refresh_menu_on_click(self) -> None:
+        """Refresh menu on tray icon click to show current authentication status."""
+        try:
+            # Reload authentication data from config
+            old_auth_state = self.is_authenticated
+            self.config._load_auth_data()
+            
+            # Update instance variables
+            self.is_authenticated = self.config.is_authenticated
+            self.auth_token = self.config.auth_token
+            self.api_url = self.config.api_url
+            
+            # Rebuild menu if auth status changed
+            if old_auth_state != self.is_authenticated:
+                self._update_auth_status()
+                self._rebuild_menu_inplace()
+                
+        except Exception as e:
+            logger.exception(f"Error refreshing menu on click: {e}")
     
     def _update_auth_status(self) -> None:
         """Update authentication status."""
