@@ -120,7 +120,6 @@ class AutostartManager:
             # Load the LaunchAgent
             subprocess.run(["launchctl", "load", plist_path], check=True)
             
-            logger.info("✅ macOS autostart enabled")
             return True
             
         except Exception as e:
@@ -137,7 +136,6 @@ class AutostartManager:
                 subprocess.run(["launchctl", "unload", plist_path], check=True)
                 os.remove(plist_path)
             
-            logger.info("✅ macOS autostart disabled")
             return True
             
         except Exception as e:
@@ -160,7 +158,6 @@ class AutostartManager:
             script_path = Path(__file__).parent.parent / "scripts" / "config-autostart.sh"
             if script_path.exists():
                 subprocess.run([str(script_path)], check=True)
-                logger.info("✅ Linux autostart enabled")
                 return True
             else:
                 logger.error("Linux autostart script not found")
@@ -176,7 +173,6 @@ class AutostartManager:
             if os.path.exists(autostart_path):
                 os.remove(autostart_path)
             
-            logger.info("✅ Linux autostart disabled")
             return True
             
         except Exception as e:
@@ -213,7 +209,6 @@ class AutostartManager:
             winreg.SetValueEx(key, "Samay", 0, winreg.REG_SZ, samay_exe)
             winreg.CloseKey(key)
             
-            logger.info("✅ Windows autostart enabled")
             return True
             
         except Exception as e:
@@ -228,7 +223,6 @@ class AutostartManager:
             winreg.DeleteValue(key, "Samay")
             winreg.CloseKey(key)
             
-            logger.info("✅ Windows autostart disabled")
             return True
             
         except Exception as e:

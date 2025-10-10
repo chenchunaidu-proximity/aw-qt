@@ -167,18 +167,13 @@ class TrayIcon(QSystemTrayIcon):
         # Auth data already loaded by AwQtSettings - no need to reload
         # Rebuild menu to reflect loaded auth status
         if self.is_authenticated:
-            logger.info("🔄 Rebuilding menu to reflect authenticated state")
             self._rebuild_menu_inplace()
         
         # Process any pending URL from QEvent.FileOpen
         global pending_samay_url
-        logger.info(f"🔧 TrayIcon init - checking pending URL: {pending_samay_url}")
         if pending_samay_url:
-            logger.info("🔄 Found pending samay:// URL at startup; processing now")
             self.handle_samay_url(pending_samay_url)
             pending_samay_url = None
-        else:
-            logger.info("ℹ️ No pending URL at startup")
         
 
         # Register global tray handle for URL callbacks
@@ -245,10 +240,9 @@ class TrayIcon(QSystemTrayIcon):
                     self.config.save_auth_data(token, url)
                     return
             
-            logger.info("ℹ️ No stored authentication data found")
+            pass
         except Exception as e:
             logger.debug(f"Could not load from aw-server: {e}")
-            logger.info("ℹ️ No stored authentication data found")
     
     def _clear_auth_data(self) -> None:
         """Clear authentication data from aw-server SQLite storage."""
@@ -257,7 +251,7 @@ class TrayIcon(QSystemTrayIcon):
             server_url = f"http://localhost:{5666 if self.testing else 5600}"
             response = requests.delete(f"{server_url}/api/0/token", timeout=2)
             if response.status_code == 200:
-                logger.info("🔐 Authentication data cleared from aw-server")
+                pass
             else:
                 logger.warning(f"Failed to clear auth data: {response.status_code}")
         except Exception as e:
@@ -265,7 +259,6 @@ class TrayIcon(QSystemTrayIcon):
     
     def _start_auth_status_checker(self) -> None:
         """Auth status only changes on user actions, not polling."""
-        logger.info("ℹ️ Auth status checker disabled - using event-driven updates only")
     
     
     def _check_auth_status(self) -> None:
@@ -277,7 +270,6 @@ class TrayIcon(QSystemTrayIcon):
             
             # If auth status changed from not authenticated to authenticated
             if not old_auth_state and self.is_authenticated:
-                logger.info("🔄 Authentication status changed - rebuilding menu")
                 self._update_auth_status()
                 self._rebuild_menu_inplace()
                 
@@ -289,7 +281,6 @@ class TrayIcon(QSystemTrayIcon):
                 # Stop the timer since we're now authenticated
                 if hasattr(self, 'auth_check_timer'):
                     self.auth_check_timer.stop()
-                    logger.info("🔄 Stopped auth status checker - now authenticated")
         except Exception as e:
             logger.exception(f"❌ Error checking auth status: {e}")
 
@@ -332,7 +323,6 @@ class TrayIcon(QSystemTrayIcon):
     def handle_samay_url(self, url: str):
         """Handle samay:// URL scheme events."""
         try:
-            logger.info(f"🔗 Processing samay:// URL: {url}")
 
             parsed = urlparse(url)
             if parsed.scheme != "samay":
@@ -352,8 +342,6 @@ class TrayIcon(QSystemTrayIcon):
 
             # Trim logging of sensitive token
             safe_tok = token[:10] + "…" if len(token) > 10 else token
-            logger.info(f"🔐 Extracted token: {safe_tok}")
-            logger.info(f"🔗 Extracted API URL: {api_url}")
 
             # Store authentication data
             self.auth_token = token
@@ -379,7 +367,6 @@ class TrayIcon(QSystemTrayIcon):
             # Notify user with authentication success popup
             def _show():
                 try:
-                    logger.info("🎉 Showing authentication success popup")
                     msg_box = QMessageBox(self._parent)
                     msg_box.setWindowTitle("Authentication Success")
                     msg_box.setText("Successfully connected to desktop!")
@@ -387,7 +374,6 @@ class TrayIcon(QSystemTrayIcon):
                     msg_box.setIcon(QMessageBox.Icon.Information)
                     msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
                     msg_box.exec()
-                    logger.info("✅ Authentication success popup shown")
                 except Exception as e:
                     logger.exception(f"❌ Error showing popup: {e}")
             
@@ -428,7 +414,6 @@ class TrayIcon(QSystemTrayIcon):
         try:
             success = self.autostart_manager.enable_autostart()
             if success:
-                logger.info("✅ Autostart enabled successfully")
                 # Show success message
                 msg_box = QMessageBox(self._parent)
                 msg_box.setWindowTitle("Autostart Enabled")
@@ -456,7 +441,6 @@ class TrayIcon(QSystemTrayIcon):
         try:
             success = self.autostart_manager.disable_autostart()
             if success:
-                logger.info("✅ Autostart disabled successfully")
                 # Show success message
                 msg_box = QMessageBox(self._parent)
                 msg_box.setWindowTitle("Autostart Disabled")
@@ -570,7 +554,6 @@ class TrayIcon(QSystemTrayIcon):
         """Fallback method for complete menu recreation if needed."""
         try:
             # Only use this as a last resort
-            logger.info("🔄 Using fallback menu recreation method")
             self._rebuild_menu_inplace()
         except Exception as e:
             logger.exception(f"❌ Error in fallback menu recreation: {e}")
@@ -602,19 +585,15 @@ class TrayIcon(QSystemTrayIcon):
         # Check for unexpected exits and attempt auto-restart
         unexpected_exits = self.manager.get_unexpected_stops()
         if unexpected_exits:
-            logger.info(f"===>> Found {len(unexpected_exits)} failed modules")
             for module in unexpected_exits:
-                logger.warning(f"===>> Module {module.name} has stopped unexpectedly")
                 # Simple restart attempt
                 if not hasattr(module, '_restart_count'):
                     module._restart_count = 0
                 if module._restart_count < 3:
                     module._restart_count += 1
-                    logger.info(f"===>> Attempting to restart {module.name} (attempt {module._restart_count}/3)")
                     module.start(self.testing)
-                    logger.info(f"===>> Restart attempt completed for {module.name}")
                 else:
-                    logger.error(f"===>> Module {module.name} has exceeded max restart attempts, showing dialog")
+                    logger.error(f"Module {module.name} has exceeded max restart attempts, showing dialog")
                     show_module_failed_dialog(module)
                     module.stop()
 
@@ -675,7 +654,6 @@ def exit(manager: Manager) -> None:
 
 
 def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None) -> Any:
-    logger.info("Creating trayicon...")
     # print(QIcon.themeSearchPaths())
 
     app = QApplication(sys.argv)
@@ -707,7 +685,7 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                                            json={"token": token, "url": target_url}, 
                                            timeout=2)
                     if response.status_code == 200:
-                        logger.info("✅ Authentication data stored in aw-server")
+                        pass
                     else:
                         logger.error(f"❌ Failed to store auth data: {response.status_code}")
                 except Exception as e:
@@ -759,10 +737,8 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                             pass
                         
                         if url and url.startswith("samay://"):
-                            logger.info(f"🔗 Received samay:// URL via QEvent.FileOpen: {url}")
                             handled = parse_and_store(url)
                             if handled:
-                                logger.info("✅ Successfully processed samay:// URL")
                                 # Immediately refresh tray menu if instance exists
                                 try:
                                     from PyQt6.QtCore import QTimer
@@ -779,11 +755,9 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
             # Install the event filter immediately after QApplication creation
             url_filter = UrlOpenFilter()
             app.installEventFilter(url_filter)
-            logger.info("🔗 Registered QEvent.FileOpen filter for samay:// URLs")
             
             # Handle URL passed as command line argument (extra resilience)
             if len(sys.argv) > 1 and sys.argv[1].startswith("samay://"):
-                logger.info(f"🔗 Processing samay:// URL from command line: {sys.argv[1]}")
                 parse_and_store(sys.argv[1])
                 
         except Exception as e:
@@ -837,11 +811,9 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
 
     # Handle samay:// URL if provided
     if samay_url:
-        logger.info(f"🔗 Processing samay:// URL in trayicon: {samay_url}")
         trayIcon.handle_samay_url(samay_url)
 
     QApplication.setQuitOnLastWindowClosed(False)
 
-    logger.info("Initialized aw-qt and trayicon successfully")
     # Run the application, blocks until quit
     return app.exec()

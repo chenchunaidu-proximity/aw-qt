@@ -54,10 +54,7 @@ class AwQtSettings:
                     self.auth_token = token
                     self.api_url = url
                     self.is_authenticated = True
-                    logger.info(f"🔐 Loaded authentication data from aw-server")
                     return
-            
-            logger.info("ℹ️ No authentication data found - user not authenticated")
 
         except Exception as e:
             logger.debug(f"Could not load from aw-server: {e}")
@@ -81,26 +78,20 @@ class AwQtSettings:
                         self.auth_token = token
                         self.api_url = url
                         self.is_authenticated = True
-                        logger.info(f"🔐 Loaded authentication data from fallback storage")
                         return
-            
-            logger.info("ℹ️ No authentication data found in fallback storage - user not authenticated")
             
         except Exception as e:
             logger.debug(f"Could not load from fallback storage: {e}")
-            logger.info("ℹ️ No authentication data found - user not authenticated")
     
     def save_auth_data(self, token: str, api_url: str) -> bool:
         """Save authentication data to aw-server SQLite storage."""
         try:
-            logger.info(f"💾 Saving authentication data")
             
             import requests
             server_url = f"http://localhost:{5666 if self.testing else 5600}"
             data = {"token": token, "url": api_url}
             response = requests.post(f"{server_url}/api/0/token", json=data, timeout=5)
             if response.status_code == 200:
-                logger.info(f"✅ Authentication data saved to aw-server")
                 
                 # Also save to fallback storage
                 self._save_auth_data_fallback(token, api_url)
@@ -138,7 +129,6 @@ class AwQtSettings:
             with open(fallback_path, 'w') as f:
                 json.dump(data, f)
             
-            logger.info(f"💾 Authentication data saved to fallback storage")
             
         except Exception as e:
             logger.error(f"❌ Failed to save to fallback storage: {e}")
@@ -146,13 +136,11 @@ class AwQtSettings:
     def clear_auth_data(self) -> bool:
         """Clear authentication data from aw-server SQLite storage."""
         try:
-            logger.info("🗑️ Clearing authentication data")
             
             import requests
             server_url = f"http://localhost:{5666 if self.testing else 5600}"
             response = requests.delete(f"{server_url}/api/0/token", timeout=5)
             if response.status_code == 200:
-                logger.info(f"✅ Authentication data cleared from aw-server")
                 
                 # Also clear from fallback storage
                 self._clear_auth_data_fallback()
@@ -182,9 +170,6 @@ class AwQtSettings:
             fallback_path = os.path.expanduser("~/Library/Application Support/activitywatch/aw-qt/auth.json")
             if os.path.exists(fallback_path):
                 os.remove(fallback_path)
-                logger.info(f"🗑️ Authentication data cleared from fallback storage")
-            else:
-                logger.info("ℹ️ No fallback storage file to clear")
                 
         except Exception as e:
             logger.error(f"❌ Failed to clear fallback storage: {e}")
@@ -192,17 +177,17 @@ class AwQtSettings:
     def get_auth_token(self) -> Optional[str]:
         """Get the stored authentication token."""
         if self.is_authenticated and self.auth_token:
-            logger.debug(f"🔑 Returning stored token: {self.auth_token[:20]}...")
+            logger.debug(f"Returning stored token: {self.auth_token[:20]}...")
             return self.auth_token
         else:
-            logger.debug("🔑 No authentication token available")
+            logger.debug("No authentication token available")
             return None
     
     def get_api_url(self) -> Optional[str]:
         """Get the stored API URL."""
         if self.is_authenticated and self.api_url:
-            logger.debug(f"🌐 Returning stored API URL: {self.api_url}")
+            logger.debug(f"Returning stored API URL: {self.api_url}")
             return self.api_url
         else:
-            logger.debug("🌐 No API URL available")
+            logger.debug("No API URL available")
             return None
