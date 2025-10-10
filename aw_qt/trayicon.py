@@ -420,6 +420,8 @@ class TrayIcon(QSystemTrayIcon):
             
             # Rebuild menu to reflect logout
             self._rebuild_menu_inplace()
+        except Exception as e:
+            logger.exception(f"❌ Error during logout: {e}")
     
     def _handle_enable_autostart(self) -> None:
         """Handle enable autostart button click."""
