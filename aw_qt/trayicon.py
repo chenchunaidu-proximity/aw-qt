@@ -223,39 +223,34 @@ class TrayIcon(QSystemTrayIcon):
             self.setToolTip(f"{base_tooltip} - Not authenticated")
     
     def _load_stored_auth_data(self):
-        """Load authentication data from aw-server SQLite storage."""
+        """Load authentication data from JSON storage."""
         try:
-            import requests
-            server_url = f"http://localhost:{5666 if self.testing else 5600}"
-            response = requests.get(f"{server_url}/api/0/token", timeout=2)
-            if response.status_code == 200:
-                data = response.json()
-                token = data.get('token')
-                url = data.get('url')
-                if token and url:
-                    self.auth_token = token
-                    self.api_url = url
-                    self.is_authenticated = True
-                    # Update config as well
-                    self.config.save_auth_data(token, url)
-                    return
-            
-            pass
+            # Load from config (which uses TokenManager)
+            token_data = self.config.token_manager.get_token_data()
+            if token_data:
+                token, url = token_data
+                self.auth_token = token
+                self.api_url = url
+                self.is_authenticated = True
+                logger.info("🔐 Loaded authentication data from JSON storage")
+            else:
+                logger.info("ℹ️ No authentication data found")
         except Exception as e:
-            logger.debug(f"Could not load from aw-server: {e}")
+            logger.error(f"❌ Failed to load authentication data: {e}")
     
     def _clear_auth_data(self) -> None:
-        """Clear authentication data from aw-server SQLite storage."""
+        """Clear authentication data from JSON storage."""
         try:
-            import requests
-            server_url = f"http://localhost:{5666 if self.testing else 5600}"
-            response = requests.delete(f"{server_url}/api/0/token", timeout=2)
-            if response.status_code == 200:
-                pass
+            success = self.config.clear_auth_data()
+            if success:
+                self.auth_token = None
+                self.api_url = None
+                self.is_authenticated = False
+                logger.info("✅ Authentication data cleared from JSON storage")
             else:
-                logger.warning(f"Failed to clear auth data: {response.status_code}")
+                logger.error("❌ Failed to clear authentication data")
         except Exception as e:
-            logger.exception(f"❌ Error clearing auth data: {e}")
+            logger.error(f"❌ Error clearing auth data: {e}")
     
     def _start_auth_status_checker(self) -> None:
         """Auth status only changes on user actions, not polling."""
@@ -677,19 +672,19 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
                     os.makedirs(d, exist_ok=True)
             
             def save_token_url(token: str, target_url: str):
-                import requests
-                server_url = f"http://localhost:5600"
-                
+                """Save token and URL using config's TokenManager."""
                 try:
-                    response = requests.post(f"{server_url}/api/0/token", 
-                                           json={"token": token, "url": target_url}, 
-                                           timeout=2)
-                    if response.status_code == 200:
-                        pass
+                    # Use the global tray icon's config to save data
+                    if current_tray_icon and hasattr(current_tray_icon, 'config'):
+                        success = current_tray_icon.config.save_auth_data(token, target_url)
+                        if success:
+                            logger.info("✅ Authentication data saved via config")
+                        else:
+                            logger.error("❌ Failed to save authentication data via config")
                     else:
-                        logger.error(f"❌ Failed to store auth data: {response.status_code}")
+                        logger.error("❌ No tray icon config available for saving")
                 except Exception as e:
-                    logger.exception(f"❌ Error storing auth data: {e}")
+                    logger.exception(f"❌ Error saving auth data: {e}")
             
             def parse_and_store(raw_url: str):
                 """Parse samay:// URL and store token/URL securely."""
