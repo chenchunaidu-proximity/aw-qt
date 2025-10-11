@@ -13,12 +13,11 @@ packages = [
 aw-qt = "aw_qt:main"
 
 [tool.poetry.dependencies]
-python = "^3.9,<3.14"  # PyInstaller needs <3.14
+python = "^3.8,<3.14"  # PyInstaller needs <3.14
 aw-core = "^0.5"
 
 pyobjc-framework-Cocoa = { version = "*", platform = "darwin" }
 click = "*"
-requests = "*"
 
 # For some reason, importlib-metadata is being uninstalled in the bundle repo CI
 # (despite needed by flask in aw-server for Python <3.10)
