@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Any, Optional
 
 from aw_core.config import load_config_toml
+from aw_datastore.storages.token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,15 @@ class AwQtSettings:
         An instance of loaded settings, containing a list of modules to autostart.
         Constructor takes a `testing` boolean as an argument
         """
+        self.testing = testing  # Store testing flag as instance variable
+        
         config = load_config_toml("aw-qt", default_config)
         config_section: Any = config["aw-qt" if not testing else "aw-qt-testing"]
 
         self.autostart_modules: List[str] = config_section["autostart_modules"]
+        
+        # Initialize TokenManager for authentication storage
+        self.token_manager = TokenManager(testing=testing)
         
         # Authentication settings
         self.auth_token: Optional[str] = None
@@ -39,44 +45,29 @@ class AwQtSettings:
     
     
     def _load_auth_data(self) -> None:
-        """Load authentication data from aw-server SQLite storage."""
+        """Load authentication data from JSON storage."""
         try:
-            import requests
-            server_url = f"http://localhost:{5666 if self.testing else 5600}"
-            response = requests.get(f"{server_url}/api/0/token", timeout=2)
-            if response.status_code == 200:
-                data = response.json()
-                token = data.get('token')
-                url = data.get('url')
-                if token and url:
-                    self.auth_token = token
-                    self.api_url = url
-                    self.is_authenticated = True
-                    logger.info(f"🔐 Loaded authentication data from aw-server SQLite")
-                    logger.info(f"   🔑 Token: {token[:20]}...{token[-10:] if len(token) > 30 else ''}")
-                    logger.info(f"   🌐 API URL: {url}")
-                    return
-            
-            logger.info("ℹ️ No authentication data found - user not authenticated")
-
+            token_data = self.token_manager.get_token_data()
+            if token_data:
+                token, url = token_data
+                self.auth_token = token
+                self.api_url = url
+                self.is_authenticated = True
+                logger.info(f"🔐 Loaded authentication data from JSON storage")
+            else:
+                logger.info("ℹ️ No authentication data found - user not authenticated")
         except Exception as e:
-            logger.debug(f"Could not load from aw-server: {e}")
+            logger.error(f"❌ Failed to load authentication data: {e}")
             logger.info("ℹ️ No authentication data found - user not authenticated")
     
     def save_auth_data(self, token: str, api_url: str) -> bool:
-        """Save authentication data to aw-server SQLite storage."""
+        """Save authentication data to JSON storage."""
         try:
-            logger.info(f"💾 Saving authentication data:")
-            logger.info(f"   🔑 Token: {token[:20]}...{token[-10:] if len(token) > 30 else ''}")
-            logger.info(f"   🌐 API URL: {api_url}")
-            logger.info(f"   📊 Token length: {len(token)} characters")
+            logger.info(f"💾 Saving authentication data")
             
-            import requests
-            server_url = f"http://localhost:{5666 if self.testing else 5600}"
-            data = {"token": token, "url": api_url}
-            response = requests.post(f"{server_url}/api/0/token", json=data, timeout=5)
-            if response.status_code == 200:
-                logger.info(f"✅ Authentication data saved to aw-server SQLite")
+            success = self.token_manager.store_token_data(token, api_url)
+            if success:
+                logger.info(f"✅ Authentication data saved to JSON storage")
                 
                 # Update instance variables
                 self.auth_token = token
@@ -84,7 +75,7 @@ class AwQtSettings:
                 self.is_authenticated = True
                 return True
             else:
-                logger.error(f"❌ Failed to save to aw-server: {response.status_code}")
+                logger.error(f"❌ Failed to save authentication data")
                 return False
             
         except Exception as e:
@@ -92,15 +83,13 @@ class AwQtSettings:
             return False
     
     def clear_auth_data(self) -> bool:
-        """Clear authentication data from aw-server SQLite storage."""
+        """Clear authentication data from JSON storage."""
         try:
             logger.info("🗑️ Clearing authentication data")
             
-            import requests
-            server_url = f"http://localhost:{5666 if self.testing else 5600}"
-            response = requests.delete(f"{server_url}/api/0/token", timeout=5)
-            if response.status_code == 200:
-                logger.info(f"✅ Authentication data cleared from aw-server SQLite")
+            success = self.token_manager.delete_token_data()
+            if success:
+                logger.info(f"✅ Authentication data cleared from JSON storage")
                 
                 # Update instance variables
                 self.auth_token = None
@@ -108,7 +97,7 @@ class AwQtSettings:
                 self.is_authenticated = False
                 return True
             else:
-                logger.error(f"❌ Failed to clear from aw-server: {response.status_code}")
+                logger.error(f"❌ Failed to clear authentication data")
                 return False
             
         except Exception as e:

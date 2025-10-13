@@ -82,7 +82,6 @@ def _discover_modules_bundled() -> List["Module"]:
         modules += _discover_modules_in_directory(path)
 
     modules = list(filter_modules(modules))
-    logger.info(f"Found {len(modules)} bundled modules")
     _log_modules(modules)
     return modules
 
@@ -116,7 +115,6 @@ def _discover_modules_system() -> List["Module"]:
                 modules.append(Module(name, Path(path) / basename, "system"))
 
     modules = list(filter_modules(modules))
-    logger.info(f"Found {len(modules)} system modules")
     _log_modules(modules)
     return modules
 
@@ -145,7 +143,6 @@ class Module:
         return f"<Module {self.name} at {self.path}>"
 
     def start(self, testing: bool) -> None:
-        logger.info(f"Starting module {self.name}")
 
         exec_cmd = [str(self.path)]
         if testing:
@@ -159,7 +156,6 @@ class Module:
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         elif sys.platform == "darwin":
-            logger.info("macOS: Disable dock icon")
             import AppKit
 
             AppKit.NSBundle.mainBundle().infoDictionary()["LSBackgroundOnly"] = "1"
@@ -186,13 +182,10 @@ class Module:
         else:
             if not self._process:
                 logger.error("No reference to process object")
-            logger.debug(f"Stopping module {self.name}")
             if self._process:
                 self._process.terminate()
-            logger.debug(f"Waiting for module {self.name} to shut down")
             if self._process:
                 self._process.wait()
-            logger.info(f"Stopped module {self.name}")
 
         assert not self.is_alive()
         self._last_process = self._process
@@ -303,19 +296,15 @@ class Manager:
             # find module
             module = next((m for m in self.modules if m.name == module_name), None)
             if module:
-                logger.info(header)
                 self._print_status_module(module)
             else:
                 logger.error(f"Module {module_name} not found")
         else:
-            logger.info(header)
             for module in self.modules:
                 self._print_status_module(module)
 
     def _print_status_module(self, module: Module) -> None:
-        logger.info(
-            f"{module.name:18}  {'running' if module.is_alive() else 'stopped' :10}  {module.type}"
-        )
+        print(f"{module.name:18}  {'running' if module.is_alive() else 'stopped' :10}  {module.type}")
 
 
 def main_test():
