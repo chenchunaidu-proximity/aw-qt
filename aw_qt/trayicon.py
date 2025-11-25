@@ -675,7 +675,7 @@ class TrayIcon(QSystemTrayIcon):
             # Filter out watcher modules (they're controlled by the top-level tracking button)
             for module in sorted(modules, key=lambda m: m.name):
                 if not module.name.startswith("aw-watcher-"):
-                add_module_menuitem(module)
+                    add_module_menuitem(module)
 
         # Add failed modules with deferred dialogs
         failed_modules = [m for m in self.manager.modules if getattr(m, "failed", False)]
