@@ -7,7 +7,7 @@ import sys
 import webbrowser
 import requests
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, parse_qs, unquote
 
 import aw_core
@@ -458,22 +458,58 @@ class TrayIcon(QSystemTrayIcon):
         except Exception as e:
             logger.exception(f"❌ Error disabling autostart: {e}")
             
-            # Defer dialog so menu closes first
-            def _show():
-                msg_box = QMessageBox(self._parent)
-                msg_box.setIcon(QMessageBox.Icon.Information)
-                msg_box.setWindowTitle("Logout")
-                msg_box.setText("Successfully logged out of Samay.")
-                msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-                msg_box.exec()
-            # Event loop deferral timer - ensures UI operations execute in correct order
-            QTimer.singleShot(0, _show)
-        except Exception as e:
-            logger.exception(f"❌ Error during logout: {e}")
-            # Event loop deferral timer - prevents UI blocking during error handling
-            QTimer.singleShot(0, lambda: QMessageBox.warning(
-                self._parent, "Logout Failed", "Failed to logout. Please try again.")
-            )
+    def _get_watcher_modules(self) -> List[Module]:
+        """Get all watcher modules (modules starting with 'aw-watcher-')."""
+        watchers = [m for m in self.manager.modules if m.name.startswith("aw-watcher-")]
+        logger.debug(f"Found {len(watchers)} watcher modules: {[w.name for w in watchers]}")
+        return watchers
+    
+    def _are_all_watchers_running(self) -> bool:
+        """Check if all watcher modules are currently running."""
+        watchers = self._get_watcher_modules()
+        if not watchers:
+            logger.debug("No watcher modules found")
+            return False
+        
+        all_running = all(watcher.is_alive() for watcher in watchers)
+        logger.debug(f"Watcher status check: all_running = {all_running}")
+        return all_running
+    
+    def _toggle_all_watchers(self) -> None:
+        """Toggle all watcher modules (start if any stopped, stop if all running)."""
+        logger.info("===>> Tracking toggle button clicked")
+        watchers = self._get_watcher_modules()
+        if not watchers:
+            logger.warning("No watcher modules found")
+            return
+        
+        all_running = self._are_all_watchers_running()
+        
+        if all_running:
+            # Stop all watchers
+            logger.info("===>> Pausing tracking - stopping all watcher modules")
+            for watcher in watchers:
+                if watcher.is_alive():
+                    logger.info(f"Stopping {watcher.name}")
+                    watcher.stop()
+                    logger.info(f"✅ {watcher.name} stopped")
+                else:
+                    logger.debug(f"{watcher.name} was already stopped")
+            logger.info("✅ All watcher modules stopped - tracking paused")
+        else:
+            # Start all watchers
+            logger.info("===>> Resuming tracking - starting all watcher modules")
+            for watcher in watchers:
+                if not watcher.is_alive():
+                    logger.info(f"Starting {watcher.name}")
+                    watcher.start(self.testing)
+                    logger.info(f"✅ {watcher.name} started")
+                else:
+                    logger.debug(f"{watcher.name} was already running")
+            logger.info("✅ All watcher modules started - tracking resumed")
+        
+        # Rebuild menu to reflect new state
+        self._rebuild_menu_inplace()
 
     def _rebuild_menu_inplace(self) -> None:
         """Rebuild the persistent tray menu without replacing the QMenu instance."""
@@ -506,6 +542,18 @@ class TrayIcon(QSystemTrayIcon):
 
             self.auth_status_action = self.auth_menu.addAction("Not authenticated")
             self.auth_status_action.setEnabled(False)
+
+        self.menu.addSeparator()
+
+        # Tracking section
+        watchers_running = self._are_all_watchers_running()
+        logger.debug(f"Building tracking menu item - watchers_running: {watchers_running}")
+        tracking_action = self.menu.addAction(
+            "Tracking Active" if watchers_running else "Tracking Paused"
+        )
+        tracking_action.setCheckable(True)
+        tracking_action.setChecked(watchers_running)
+        tracking_action.triggered.connect(self._toggle_all_watchers)
 
         self.menu.addSeparator()
 
@@ -624,8 +672,10 @@ class TrayIcon(QSystemTrayIcon):
             header = modulesMenu.addAction(location)
             header.setEnabled(False)
 
+            # Filter out watcher modules (they're controlled by the top-level tracking button)
             for module in sorted(modules, key=lambda m: m.name):
-                add_module_menuitem(module)
+                if not module.name.startswith("aw-watcher-"):
+                    add_module_menuitem(module)
 
         # Add failed modules with deferred dialogs
         failed_modules = [m for m in self.manager.modules if getattr(m, "failed", False)]
