@@ -126,6 +126,7 @@ class TrayIcon(QSystemTrayIcon):
         self,
         manager: Manager,
         icon: QIcon,
+        logout_icon: QIcon,
         parent: Optional[QWidget] = None,
         testing: bool = False,
     ) -> None:
@@ -138,6 +139,10 @@ class TrayIcon(QSystemTrayIcon):
 
         self.root_url = f"http://localhost:{5666 if self.testing else 5600}"
         self.activated.connect(self.on_activated)
+        
+        # Store icons (normal and logout)
+        self.normal_icon = icon
+        self.logout_icon = logout_icon
         
         # Load configuration
         self.config = AwQtSettings(testing=testing)
@@ -213,6 +218,23 @@ class TrayIcon(QSystemTrayIcon):
         # The old get_auth_status was for the old ActivityWatch API
         # Now we use the token and API URL from Frontend
         self._update_tooltip()
+        self._update_icon()
+    
+    def _update_icon(self) -> None:
+        """Update icon based on authentication status."""
+        try:
+            if self.is_authenticated:
+                # User is authenticated - use normal icon
+                self.setIcon(self.normal_icon)
+            else:
+                # Token expired or not authenticated - use logout icon
+                if self.logout_icon:
+                    self.setIcon(self.logout_icon)
+                else:
+                    # Fallback to normal icon if logout icon not provided yet
+                    self.setIcon(self.normal_icon)
+        except Exception as e:
+            logger.exception(f"Error updating icon: {e}")
     
     def _update_tooltip(self) -> None:
         """Update tooltip with authentication status."""
@@ -862,10 +884,13 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
         icon = QIcon("icons:black-monochrome-logo.png")
         # Allow macOS to use filters for changing the icon's color
         icon.setIsMask(True)
+        logout_icon = QIcon("icons:black-monochrome-logo-logout.png")
+        logout_icon.setIsMask(True)
     else:
         icon = QIcon("icons:logo.png")
+        logout_icon = QIcon("icons:black-monochrome-logo-logout.png")
 
-    trayIcon = TrayIcon(manager, icon, widget, testing=testing)
+    trayIcon = TrayIcon(manager, icon, logout_icon, widget, testing=testing)
     trayIcon.show()
 
     # Handle samay:// URL if provided
