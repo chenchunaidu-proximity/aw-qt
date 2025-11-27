@@ -234,9 +234,16 @@ class TrayIcon(QSystemTrayIcon):
                 self.is_authenticated = True
                 logger.info("🔐 Loaded authentication data from JSON storage")
             else:
+                # Token expired or doesn't exist
+                self.auth_token = None
+                self.api_url = None
+                self.is_authenticated = False
                 logger.info("ℹ️ No authentication data found")
         except Exception as e:
             logger.error(f"❌ Failed to load authentication data: {e}")
+            self.auth_token = None
+            self.api_url = None
+            self.is_authenticated = False
     
     def _clear_auth_data(self) -> None:
         """Clear authentication data from JSON storage."""
@@ -263,8 +270,15 @@ class TrayIcon(QSystemTrayIcon):
             old_auth_state = self.is_authenticated
             self._load_stored_auth_data()
             
+            # Handle token expiration (authenticated → not authenticated)
+            if old_auth_state and not self.is_authenticated:
+                # Token expired - update UI
+                self._update_auth_status()
+                self._rebuild_menu_inplace()
+                logger.info("Token expired - user logged out automatically")
+            
             # If auth status changed from not authenticated to authenticated
-            if not old_auth_state and self.is_authenticated:
+            elif not old_auth_state and self.is_authenticated:
                 self._update_auth_status()
                 self._rebuild_menu_inplace()
                 

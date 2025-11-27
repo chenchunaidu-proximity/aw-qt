@@ -55,9 +55,16 @@ class AwQtSettings:
                 self.is_authenticated = True
                 logger.info(f"🔐 Loaded authentication data from JSON storage")
             else:
+                # Token expired or doesn't exist
+                self.auth_token = None
+                self.api_url = None
+                self.is_authenticated = False
                 logger.info("ℹ️ No authentication data found - user not authenticated")
         except Exception as e:
             logger.error(f"❌ Failed to load authentication data: {e}")
+            self.auth_token = None
+            self.api_url = None
+            self.is_authenticated = False
             logger.info("ℹ️ No authentication data found - user not authenticated")
     
     def save_auth_data(self, token: str, api_url: str) -> bool:
