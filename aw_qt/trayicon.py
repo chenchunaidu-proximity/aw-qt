@@ -180,6 +180,13 @@ class TrayIcon(QSystemTrayIcon):
             self.handle_samay_url(pending_samay_url)
             pending_samay_url = None
         
+        # Periodic token expiration check (only when authenticated)
+        # This detects when scheduler deletes expired token
+        self.token_check_timer = QTimer()
+        self.token_check_timer.timeout.connect(self._check_auth_status)
+        # Only start timer if authenticated (no need to check if already logged out)
+        if self.is_authenticated:
+            self.token_check_timer.start(2 * 60 * 1000)  # Check every 2 minutes
 
         # Register global tray handle for URL callbacks
         global current_tray_icon
@@ -194,23 +201,8 @@ class TrayIcon(QSystemTrayIcon):
     
     def _refresh_menu_on_click(self) -> None:
         """Refresh menu on tray icon click to show current authentication status."""
-        try:
-            # Reload authentication data from config
-            old_auth_state = self.is_authenticated
-            self.config._load_auth_data()
-            
-            # Update instance variables
-            self.is_authenticated = self.config.is_authenticated
-            self.auth_token = self.config.auth_token
-            self.api_url = self.config.api_url
-            
-            # Rebuild menu if auth status changed
-            if old_auth_state != self.is_authenticated:
-                self._update_auth_status()
-                self._rebuild_menu_inplace()
-                
-        except Exception as e:
-            logger.exception(f"Error refreshing menu on click: {e}")
+        # Use the same check method for consistency
+        self._check_auth_status()
     
     def _update_auth_status(self) -> None:
         """Update authentication status."""
@@ -281,10 +273,6 @@ class TrayIcon(QSystemTrayIcon):
         except Exception as e:
             logger.error(f"❌ Error clearing auth data: {e}")
     
-    def _start_auth_status_checker(self) -> None:
-        """Auth status only changes on user actions, not polling."""
-    
-    
     def _check_auth_status(self) -> None:
         """Check if authentication status has changed and update UI accordingly."""
         try:
@@ -294,10 +282,12 @@ class TrayIcon(QSystemTrayIcon):
             
             # Handle token expiration (authenticated → not authenticated)
             if old_auth_state and not self.is_authenticated:
-                # Token expired - update UI
+                # Token expired - update UI automatically
                 self._update_auth_status()
                 self._rebuild_menu_inplace()
-                logger.info("Token expired - user logged out automatically")
+                # Stop timer since we're now logged out (no need to keep checking)
+                self.token_check_timer.stop()
+                logger.info("Token expired - user logged out automatically (detected by periodic check)")
             
             # If auth status changed from not authenticated to authenticated
             elif not old_auth_state and self.is_authenticated:
@@ -309,9 +299,8 @@ class TrayIcon(QSystemTrayIcon):
                 # UI refresh timer - ensures tray icon visual state updates after menu changes
                 QTimer.singleShot(100, lambda: self.show())
                 
-                # Stop the timer since we're now authenticated
-                if hasattr(self, 'auth_check_timer'):
-                    self.auth_check_timer.stop()
+                # Start token check timer since we're now authenticated
+                self.token_check_timer.start(2 * 60 * 1000)
         except Exception as e:
             logger.exception(f"❌ Error checking auth status: {e}")
 
