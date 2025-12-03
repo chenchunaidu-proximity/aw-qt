@@ -122,10 +122,14 @@ def open_auth_page(root_url: str) -> None:
 # Global reference to the live tray icon instance (used by macOS URL callbacks)
 current_tray_icon = None  # set in TrayIcon.__init__
 class TrayIcon(QSystemTrayIcon):
+    # Token check interval (1 hour)
+    TOKEN_CHECK_INTERVAL_MS = 60 * 60 * 1000
+    
     def __init__(
         self,
         manager: Manager,
         icon: QIcon,
+        logout_icon: QIcon,
         parent: Optional[QWidget] = None,
         testing: bool = False,
     ) -> None:
@@ -138,6 +142,10 @@ class TrayIcon(QSystemTrayIcon):
 
         self.root_url = f"http://localhost:{5666 if self.testing else 5600}"
         self.activated.connect(self.on_activated)
+        
+        # Store icons (normal and logout)
+        self.normal_icon = icon
+        self.logout_icon = logout_icon
         
         # Load configuration
         self.config = AwQtSettings(testing=testing)
@@ -161,13 +169,8 @@ class TrayIcon(QSystemTrayIcon):
         # Create the menu ONCE and keep it
         self.menu = QMenu(self._parent)
         self.setContextMenu(self.menu)
-        self._rebuild_menu_inplace()  # Update in place instead of replacing
         self._update_auth_status()
-        
-        # Auth data already loaded by AwQtSettings - no need to reload
-        # Rebuild menu to reflect loaded auth status
-        if self.is_authenticated:
-            self._rebuild_menu_inplace()
+        self._rebuild_menu_inplace()
         
         # Process any pending URL from QEvent.FileOpen
         global pending_samay_url
@@ -175,6 +178,11 @@ class TrayIcon(QSystemTrayIcon):
             self.handle_samay_url(pending_samay_url)
             pending_samay_url = None
         
+        # Periodic token expiration check (only when authenticated)
+        self.token_check_timer = QTimer()
+        self.token_check_timer.timeout.connect(self._check_auth_status)
+        if self.is_authenticated:
+            self._start_token_check_timer()
 
         # Register global tray handle for URL callbacks
         global current_tray_icon
@@ -189,23 +197,25 @@ class TrayIcon(QSystemTrayIcon):
     
     def _refresh_menu_on_click(self) -> None:
         """Refresh menu on tray icon click to show current authentication status."""
-        try:
-            # Reload authentication data from config
-            old_auth_state = self.is_authenticated
-            self.config._load_auth_data()
-            
-            # Update instance variables
-            self.is_authenticated = self.config.is_authenticated
-            self.auth_token = self.config.auth_token
-            self.api_url = self.config.api_url
-            
-            # Rebuild menu if auth status changed
-            if old_auth_state != self.is_authenticated:
-                self._update_auth_status()
-                self._rebuild_menu_inplace()
-                
-        except Exception as e:
-            logger.exception(f"Error refreshing menu on click: {e}")
+        # Use the same check method for consistency
+        self._check_auth_status()
+    
+    def _start_token_check_timer(self) -> None:
+        """Start the periodic token expiration check timer."""
+        if not self.token_check_timer.isActive():
+            self.token_check_timer.start(self.TOKEN_CHECK_INTERVAL_MS)
+    
+    def _refresh_ui_after_auth_change(self) -> None:
+        """Update UI (icon, tooltip, menu) after authentication status changes."""
+        self._update_auth_status()
+        self._rebuild_menu_inplace()
+    
+    def _refresh_ui_after_login(self) -> None:
+        """Refresh UI after login with forced icon refresh."""
+        self._refresh_ui_after_auth_change()
+        # Force tray icon to refresh
+        self.show()
+        QTimer.singleShot(100, lambda: self.show())
     
     def _update_auth_status(self) -> None:
         """Update authentication status."""
@@ -213,6 +223,23 @@ class TrayIcon(QSystemTrayIcon):
         # The old get_auth_status was for the old ActivityWatch API
         # Now we use the token and API URL from Frontend
         self._update_tooltip()
+        self._update_icon()
+    
+    def _update_icon(self) -> None:
+        """Update icon based on authentication status."""
+        try:
+            if self.is_authenticated:
+                # User is authenticated - use normal icon
+                self.setIcon(self.normal_icon)
+            else:
+                # Token expired or not authenticated - use logout icon
+                if self.logout_icon:
+                    self.setIcon(self.logout_icon)
+                else:
+                    # Fallback to normal icon if logout icon not provided yet
+                    self.setIcon(self.normal_icon)
+        except Exception as e:
+            logger.exception(f"Error updating icon: {e}")
     
     def _update_tooltip(self) -> None:
         """Update tooltip with authentication status."""
@@ -222,39 +249,36 @@ class TrayIcon(QSystemTrayIcon):
         else:
             self.setToolTip(f"{base_tooltip} - Not authenticated")
     
+    def _set_auth_state(self, token: Optional[str], url: Optional[str], authenticated: bool) -> None:
+        """Set authentication state variables."""
+        self.auth_token = token
+        self.api_url = url
+        self.is_authenticated = authenticated
+    
     def _load_stored_auth_data(self):
         """Load authentication data from JSON storage."""
         try:
-            # Load from config (which uses TokenManager)
             token_data = self.config.token_manager.get_token_data()
             if token_data:
                 token, url = token_data
-                self.auth_token = token
-                self.api_url = url
-                self.is_authenticated = True
-                logger.info("🔐 Loaded authentication data from JSON storage")
+                self._set_auth_state(token, url, True)
             else:
-                logger.info("ℹ️ No authentication data found")
+                self._set_auth_state(None, None, False)
         except Exception as e:
             logger.error(f"❌ Failed to load authentication data: {e}")
+            self._set_auth_state(None, None, False)
     
     def _clear_auth_data(self) -> None:
         """Clear authentication data from JSON storage."""
         try:
             success = self.config.clear_auth_data()
             if success:
-                self.auth_token = None
-                self.api_url = None
-                self.is_authenticated = False
+                self._set_auth_state(None, None, False)
                 logger.info("✅ Authentication data cleared from JSON storage")
             else:
                 logger.error("❌ Failed to clear authentication data")
         except Exception as e:
             logger.error(f"❌ Error clearing auth data: {e}")
-    
-    def _start_auth_status_checker(self) -> None:
-        """Auth status only changes on user actions, not polling."""
-    
     
     def _check_auth_status(self) -> None:
         """Check if authentication status has changed and update UI accordingly."""
@@ -263,19 +287,17 @@ class TrayIcon(QSystemTrayIcon):
             old_auth_state = self.is_authenticated
             self._load_stored_auth_data()
             
+            # Handle token expiration (authenticated → not authenticated)
+            if old_auth_state and not self.is_authenticated:
+                self._refresh_ui_after_auth_change()
+                self.token_check_timer.stop()
+                logger.info("Token expired - user logged out automatically")
+            
             # If auth status changed from not authenticated to authenticated
-            if not old_auth_state and self.is_authenticated:
-                self._update_auth_status()
-                self._rebuild_menu_inplace()
-                
-                # Force tray icon to refresh with multiple attempts
-                self.show()
-                # UI refresh timer - ensures tray icon visual state updates after menu changes
-                QTimer.singleShot(100, lambda: self.show())
-                
-                # Stop the timer since we're now authenticated
-                if hasattr(self, 'auth_check_timer'):
-                    self.auth_check_timer.stop()
+            elif not old_auth_state and self.is_authenticated:
+                self._refresh_ui_after_login()
+                # Start token check timer since we're now authenticated
+                self._start_token_check_timer()
         except Exception as e:
             logger.exception(f"❌ Error checking auth status: {e}")
 
@@ -351,11 +373,9 @@ class TrayIcon(QSystemTrayIcon):
 
             # Rebuild menu to reflect auth status
             try:
-                self._update_auth_status()
-                self._rebuild_menu_inplace()
-                # Force immediate refresh to ensure menu is properly updated
-                # UI synchronization timer - prevents race conditions in menu updates
-                QTimer.singleShot(50, lambda: self.show())
+                self._refresh_ui_after_login()
+                # Start token check timer since user just logged in
+                self._start_token_check_timer()
             except Exception:
                 logger.exception("⚠️ Failed to rebuild tray menu after auth")
 
@@ -399,8 +419,8 @@ class TrayIcon(QSystemTrayIcon):
             self.auth_token = ""
             self.api_url = ""
             
-            # Rebuild menu to reflect logout
-            self._rebuild_menu_inplace()
+            # Update UI to reflect logout
+            self._refresh_ui_after_auth_change()
         except Exception as e:
             logger.exception(f"❌ Error during logout: {e}")
     
@@ -848,10 +868,13 @@ def run(manager: Manager, testing: bool = False, samay_url: Optional[str] = None
         icon = QIcon("icons:black-monochrome-logo.png")
         # Allow macOS to use filters for changing the icon's color
         icon.setIsMask(True)
+        logout_icon = QIcon("icons:black-monochrome-logo-logout.png")
+        logout_icon.setIsMask(True)
     else:
         icon = QIcon("icons:logo.png")
+        logout_icon = QIcon("icons:black-monochrome-logo-logout.png")
 
-    trayIcon = TrayIcon(manager, icon, widget, testing=testing)
+    trayIcon = TrayIcon(manager, icon, logout_icon, widget, testing=testing)
     trayIcon.show()
 
     # Handle samay:// URL if provided
